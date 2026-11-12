@@ -46,8 +46,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const allOn = CALENDARS.every((c) => filters[c.id]);
 
   const mine = requests.filter((r) => role === "INSTRUCTOR" || r.studentId === actor.userId);
-  const todo = mine.filter((r) => canResolve(r, actor));
-  const waiting = mine.filter((r) => canCancel(r, actor));
+  // 오래 기다린 요청이 위로
+  const byAge = (a: ScheduleRequest, b: ScheduleRequest) => a.createdAt.localeCompare(b.createdAt);
+  const todo = mine.filter((r) => canResolve(r, actor)).sort(byAge);
+  const waiting = mine.filter((r) => canCancel(r, actor)).sort(byAge);
   const history = mine
     .filter((r) => r.status !== "PENDING")
     .sort((a, b) => (b.resolvedAt ?? "").localeCompare(a.resolvedAt ?? ""))
@@ -167,7 +169,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <h2 className="mb-2 text-xs font-semibold text-zinc-500">최근 처리 내역</h2>
             <ul className="space-y-1.5">
               {history.map((r) => (
-                <li key={r.id} className="rounded-lg border border-zinc-200 px-2.5 py-2 text-xs">
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    onClick={() => goTo(r)}
+                    className="w-full rounded-lg border border-zinc-200 px-2.5 py-2 text-left text-xs hover:bg-zinc-50"
+                  >
                   <span
                     className={cn(
                       "mr-1.5 font-semibold",
@@ -180,8 +187,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   </span>
                   {describeHistory(r, role)}
                   {r.rejectReason && (
-                    <p className="mt-1 text-zinc-600">사유: {r.rejectReason}</p>
+                    <span className="mt-1 block text-zinc-600">사유: {r.rejectReason}</span>
                   )}
+                  </button>
                 </li>
               ))}
             </ul>

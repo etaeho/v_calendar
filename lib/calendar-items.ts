@@ -160,6 +160,8 @@ export const STATUS_LABEL: Record<SlotDisplay, string> = {
 /** 달력 배지에 표시할 짧은 제목 */
 export function slotTitle(view: SlotView, role: UserRole): string {
   const makeup = view.slot.lessonType === "MAKEUP";
+  // 강사가 먼저 제안한 변경은 '요청'이 아니라 '제안'으로 표시한다
+  const proposedByInstructor = view.request?.requestedBy === "INSTRUCTOR";
   if (role === "INSTRUCTOR") {
     const name = userName(view.slot.studentId);
     switch (view.display) {
@@ -170,9 +172,9 @@ export function slotTitle(view: SlotView, role: UserRole): string {
       case "PENDING_BOOKING":
         return `${name} 보강 신청`;
       case "PENDING_CHANGE_FROM":
-        return `${name} 변경 요청`;
+        return proposedByInstructor ? `${name} 변경 제안` : `${name} 변경 요청`;
       case "PENDING_CHANGE_TO":
-        return `${name} 변경 희망`;
+        return proposedByInstructor ? `${name} 제안한 시간` : `${name} 변경 희망`;
       default:
         return "마감됨";
     }
@@ -185,9 +187,9 @@ export function slotTitle(view: SlotView, role: UserRole): string {
     case "PENDING_BOOKING":
       return "보강 승인 대기";
     case "PENDING_CHANGE_FROM":
-      return "변경 요청 중";
+      return proposedByInstructor ? "변경 제안 도착" : "변경 요청 중";
     case "PENDING_CHANGE_TO":
-      return "변경 희망 시간";
+      return proposedByInstructor ? "제안받은 시간" : "변경 희망 시간";
     default:
       return "마감됨";
   }

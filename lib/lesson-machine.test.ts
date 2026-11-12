@@ -170,7 +170,9 @@ describe("일정 변경 (CONFIRMED+OPEN → PENDING_CHANGE → swap | 유지)", 
     throwsCode(() => approveRequest(s, other, req.id, ctx), "FORBIDDEN");
     s = approveRequest(s, me, req.id, ctx);
     assert.equal(slot(s, "open2").status, "CONFIRMED");
-    assert.equal(slot(s, "mine").status, "OPEN");
+    // 강사가 제안한 변경이므로 기존 시간은 다시 열리지 않고 사라진다
+    assert.equal(s.slots.some((x) => x.id === "mine"), false);
+    assert.ok(s.comments.some((c) => c.body.startsWith("레슨생이 일정 변경에 동의했습니다")));
   });
 
   it("거절하면 기존 일정이 유지되고 사유가 댓글로 남는다", () => {
@@ -248,7 +250,7 @@ describe("드래그 앤 드롭", () => {
     assert.equal(req.requestedBy, "INSTRUCTOR");
     s = approveRequest(s, me, req.id, ctx);
     assert.equal(slot(s, req.toSlotId).status, "CONFIRMED");
-    assert.equal(slot(s, "mine").status, "OPEN");
+    assert.equal(s.slots.some((x) => x.id === "mine"), false);
     throwsCode(() => requestChangeToNewTime(seed(), me, "mine", { start: at(9, 15), end: at(9, 16) }, ctx), "FORBIDDEN");
     throwsCode(() => requestChangeToNewTime(seed(), teacher, "mine", { start: at(8, 10), end: at(8, 11) }, ctx), "OVERLAP");
   });
@@ -272,5 +274,36 @@ describe("드래그 앤 드롭", () => {
     // 남의 레슨, 지난 시간
     assert.equal(planDrop(st, me, "theirs", at(6, 10), NOW).kind, "invalid");
     assert.equal(planDrop(st, teacher, "open1", at(1, 0), at(3, 0)).kind, "invalid");
+  });
+});
+
+describe("지난 시간 차단", () => {
+  // 지금 = 1월 6일 12:00 (open1 = 1/5 지난 슬롯, open2 = 1/6 10:00 지난 슬롯, mine = 1/7 미래)
+  const lateCtx = (): MachineContext => {
+    let n = 0;
+    return { now: () => at(6, 12), id: (p) => `${p}-${++n}` };
+  };
+
+  it("지난 시간에는 슬롯 열기·보강 신청·변경 대상 지정이 안 된다", () => {
+    const ctx = lateCtx();
+    throwsCode(() => createOpenSlot(seed(), teacher, { start: at(6, 9), end: at(6, 10) }, ctx), "INVALID_RANGE");
+    throwsCode(() => requestBooking(seed(), me, "open1", ctx), "INVALID_STATE");
+    throwsCode(() => requestChange(seed(), me, "mine", "open2", ctx), "INVALID_STATE");
+  });
+
+  it("이미 끝난 레슨은 변경 요청할 수 없다", () => {
+    const ctx: MachineContext = { now: () => at(8, 0), id: (p) => `${p}-x` };
+    const st = createOpenSlot(seed(), teacher, { start: at(9, 10), end: at(9, 11) }, ctx).state;
+    const target = st.slots.find((x) => x.start === at(9, 10))!;
+    throwsCode(() => requestChange(st, me, "mine", target.id, ctx), "INVALID_STATE");
+    assert.equal(planDrop(st, me, "mine", at(9, 10), at(8, 0)).kind, "invalid");
+  });
+
+  it("레슨생 동의/승인 문구와 진행 기록 조사가 맞다", () => {
+    const ctx = makeCtx();
+    const s = requestChange(seed(), teacher, "mine", "open2", ctx);
+    assert.ok(s.comments.some((c) => c.body.endsWith("레슨생 동의를 기다리는 중입니다.")));
+    const s2 = requestChange(seed(), me, "mine", "open2", ctx);
+    assert.ok(s2.comments.some((c) => c.body.endsWith("강사 승인을 기다리는 중입니다.")));
   });
 });

@@ -48,6 +48,8 @@ export const overlaps = (
   bEnd: string,
 ) => Date.parse(aStart) < Date.parse(bEnd) && Date.parse(bStart) < Date.parse(aEnd);
 
+const isPast = (iso: string, ctx: MachineContext) => Date.parse(iso) < Date.parse(ctx.now());
+
 const findSlot = (state: LessonState, slotId: string): LessonSlot => {
   const slot = state.slots.find((s) => s.id === slotId);
   if (!slot) throw new LessonError("NOT_FOUND", "슬롯을 찾을 수 없습니다.");
@@ -106,6 +108,8 @@ export function createOpenSlot(
     throw new LessonError("FORBIDDEN", "강사만 레슨 가능 시간을 열 수 있습니다.");
   if (!(Date.parse(range.start) < Date.parse(range.end)))
     throw new LessonError("INVALID_RANGE", "종료 시간이 시작 시간보다 늦어야 합니다.");
+  if (isPast(range.start, ctx))
+    throw new LessonError("INVALID_RANGE", "지난 시간에는 슬롯을 열 수 없습니다.");
   if (state.slots.some((s) => overlaps(s.start, s.end, range.start, range.end)))
     throw new LessonError("OVERLAP", "이미 등록된 레슨/슬롯과 시간이 겹칩니다.");
 
@@ -170,6 +174,8 @@ export function requestBooking(
   const slot = findSlot(state, slotId);
   if (slot.status !== "OPEN")
     throw new LessonError("INVALID_STATE", "이미 마감된 슬롯입니다.");
+  if (isPast(slot.start, ctx))
+    throw new LessonError("INVALID_STATE", "이미 지난 시간이라 신청할 수 없습니다.");
 
   const request: ScheduleRequest = {
     id: ctx.id("req"),
@@ -219,6 +225,10 @@ export function requestChange(
     throw new LessonError("FORBIDDEN", "본인의 레슨만 변경 요청할 수 있습니다.");
   if (to.status !== "OPEN")
     throw new LessonError("INVALID_STATE", "변경 대상은 빈 슬롯이어야 합니다.");
+  if (Date.parse(from.end) <= Date.parse(ctx.now()))
+    throw new LessonError("INVALID_STATE", "이미 끝난 레슨은 변경할 수 없습니다.");
+  if (isPast(to.start, ctx))
+    throw new LessonError("INVALID_STATE", "지난 시간으로는 옮길 수 없습니다.");
 
   const request: ScheduleRequest = {
     id: ctx.id("req"),
@@ -233,7 +243,7 @@ export function requestChange(
     message: cleanMessage(message),
     createdAt: ctx.now(),
   };
-  const waitingFor = actor.role === "STUDENT" ? "강사 승인" : "레슨생 동의";
+  const waitingFor = actor.role === "STUDENT" ? "강사 승인을" : "레슨생 동의를";
   return {
     slots: replaceSlots(state, [
       { ...from, status: "PENDING_CHANGE", requestId: request.id },
@@ -253,7 +263,7 @@ export function requestChange(
       systemComment(
         ctx,
         from.threadId,
-        `${actor.role === "STUDENT" ? "레슨생이" : "강사가"} 일정 변경을 요청했습니다. ${waitingFor}을 기다리는 중입니다.`,
+        `${actor.role === "STUDENT" ? "레슨생이" : "강사가"} 일정 변경을 요청했습니다. ${waitingFor} 기다리는 중입니다.`,
       ),
     ],
   };
@@ -316,6 +326,8 @@ export function planDrop(
     slot.status === "CONFIRMED" &&
     !!slot.studentId &&
     (actor.role === "INSTRUCTOR" || slot.studentId === actor.userId);
+  if (canChange && Date.parse(slot.end) <= Date.parse(now))
+    return invalid("이미 끝난 레슨은 옮길 수 없습니다.");
   if (!canChange) {
     return invalid(
       slot.status === "CONFIRMED" ? "본인 레슨만 옮길 수 있습니다." : "응답 대기 중인 일정은 옮길 수 없습니다.",
@@ -406,13 +418,17 @@ export function approveRequest(
   const to = findSlot(state, request.toSlotId);
   const confirmed: LessonSlot = { ...to, status: "CONFIRMED", requestId: undefined };
   const changed: LessonSlot[] = [confirmed];
+  let removeId: string | undefined;
   if (request.kind === "CHANGE") {
-    // 기존 슬롯은 다시 OPEN 으로, 대화 스레드는 새 슬롯(confirmed)이 이어받는다
-    changed.push(toOpen(ctx, findSlot(state, request.fromSlotId!)));
+    // 대화 스레드는 새 슬롯(confirmed)이 이어받는다.
+    // 레슨생이 요청한 변경: 기존 시간은 다시 빈 슬롯(OPEN)으로 연다.
+    // 강사가 제안한 변경: 강사가 그 시간에 안 되는 경우이므로 기존 시간을 열지 않고 지운다.
+    if (request.requestedBy === "STUDENT") changed.push(toOpen(ctx, findSlot(state, request.fromSlotId!)));
+    else removeId = request.fromSlotId;
   }
   const who = actor.role === "INSTRUCTOR" ? "강사가" : "레슨생이";
   return {
-    slots: replaceSlots(state, changed),
+    slots: replaceSlots(state, changed).filter((s) => s.id !== removeId),
     requests: replaceRequest(state, {
       ...request,
       status: "APPROVED",
@@ -425,7 +441,9 @@ export function approveRequest(
         confirmed.threadId,
         request.kind === "BOOKING"
           ? `${who} 보강 신청을 승인했습니다. 레슨이 확정되었습니다.`
-          : `${who} 일정 변경을 승인했습니다. 새 시간으로 확정되었습니다.`,
+          : actor.role === "STUDENT"
+            ? "레슨생이 일정 변경에 동의했습니다. 새 시간으로 확정되었습니다."
+            : `${who} 일정 변경을 승인했습니다. 새 시간으로 확정되었습니다.`,
       ),
     ],
   };

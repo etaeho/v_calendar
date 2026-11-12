@@ -1,6 +1,6 @@
 "use client";
 
-import { addMinutes, format, isSameDay, startOfDay } from "date-fns";
+import { addMinutes, endOfDay, format, isSameDay, startOfDay } from "date-fns";
 import {
   AlertTriangle,
   ArrowDown,
@@ -45,10 +45,12 @@ import { canCancel, canResolve } from "@/lib/lesson-machine";
 import { INSTRUCTOR, userName } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 import { useActor, useCalendarStore } from "@/store/calendar-store";
-import type { Comment, ExternalEvent, SlotView } from "@/types/calendar";
+import type { Comment, ExternalEvent, ScheduleRequest, SlotView } from "@/types/calendar";
 
 export function Drawer() {
   const drawer = useCalendarStore((s) => s.drawer);
+  // 테스트베드에서 사용자를 바꾸면 입력 중이던 내용이 다음 사용자에게 남지 않도록 사용자별로 새로 그린다
+  const { userId } = useActor();
   const close = useCalendarStore((s) => s.closeDrawer);
 
   useEffect(() => {
@@ -61,10 +63,10 @@ export function Drawer() {
   let body: ReactNode = null;
   if (drawer.type === "day") {
     title = fmtDay(drawer.date);
-    body = <DayPanel key={drawer.date} date={drawer.date} />;
+    body = <DayPanel key={`${drawer.date}-${userId}`} date={drawer.date} />;
   } else if (drawer.type === "slot") {
     title = "레슨 일정";
-    body = <SlotPanel key={drawer.slotId} slotId={drawer.slotId} />;
+    body = <SlotPanel key={`${drawer.slotId}-${userId}`} slotId={drawer.slotId} />;
   } else if (drawer.type === "external") {
     title = "개인 일정";
     body = <ExternalPanel eventId={drawer.eventId} />;
@@ -72,7 +74,7 @@ export function Drawer() {
     title = "일정 변경 요청";
     body = (
       <ReschedulePanel
-        key={drawer.fromSlotId}
+        key={`${drawer.fromSlotId}-${userId}`}
         fromSlotId={drawer.fromSlotId}
         toSlotId={drawer.toSlotId}
         toRange={drawer.toRange}
@@ -102,6 +104,7 @@ export function Drawer() {
 
 function DayPanel({ date }: { date: string }) {
   const role = useCalendarStore((s) => s.role);
+  const now = useCalendarStore((s) => s.now);
   const createSlot = useCalendarStore((s) => s.createSlot);
   const openDrawer = useCalendarStore((s) => s.openDrawer);
   const items = itemsOnDay(useCalendarItems(), new Date(date));
@@ -120,6 +123,7 @@ function DayPanel({ date }: { date: string }) {
   };
 
   const holidays = holidaysOn(new Date(date));
+  const isPastDay = endOfDay(new Date(date)) < new Date(now);
 
   return (
     <div className="flex-1 space-y-4 overflow-y-auto p-4">
@@ -165,7 +169,11 @@ function DayPanel({ date }: { date: string }) {
         </ul>
       )}
 
-      {role === "INSTRUCTOR" && (
+      {role === "INSTRUCTOR" && isPastDay && (
+        <Hint>지난 날짜에는 레슨 가능 슬롯을 열 수 없습니다.</Hint>
+      )}
+
+      {role === "INSTRUCTOR" && !isPastDay && (
         <section className="rounded-xl border border-dashed border-mint-500 bg-mint-50/60 p-3">
           <h3 className="mb-2 text-sm font-semibold text-mint-800">레슨 가능 슬롯 열기</h3>
           <div className="flex items-end gap-2">
@@ -279,6 +287,7 @@ function SlotPanel({ slotId }: { slotId: string }) {
   const role = useCalendarStore((s) => s.role);
   const now = useCalendarStore((s) => s.now);
   const comments = useCalendarStore((s) => s.lesson.comments);
+  const requests = useCalendarStore((s) => s.lesson.requests);
   const store = useCalendarStore.getState;
   const views = useSlotViews();
   const myEvents = useMyExternalEvents();
@@ -291,6 +300,17 @@ function SlotPanel({ slotId }: { slotId: string }) {
 
   const { slot, display, request } = view;
   const isPast = new Date(slot.start) < new Date(now);
+  const isEnded = new Date(slot.end) <= new Date(now);
+  // 이 슬롯에서 처리가 끝난 요청 (강사는 전부, 레슨생은 자기 요청만 — 재사용된 슬롯의 남의 기록은 숨김)
+  const pastRequests = requests
+    .filter(
+      (r) =>
+        r.status !== "PENDING" &&
+        (r.toSlotId === slot.id || r.fromSlotId === slot.id) &&
+        (actor.role === "INSTRUCTOR" || r.studentId === actor.userId),
+    )
+    .sort((a, b) => (b.resolvedAt ?? "").localeCompare(a.resolvedAt ?? ""))
+    .slice(0, 3);
 
   if (view.masked) {
     return (
@@ -359,6 +379,8 @@ function SlotPanel({ slotId }: { slotId: string }) {
             <RequestCard view={view} views={views} />
           )}
 
+          {pastRequests.length > 0 && <PastRequests items={pastRequests} />}
+
           {conflicts.length > 0 && <ConflictNotice events={conflicts} />}
 
           {/* ---- 요청이 없는 상태에서 할 수 있는 일 ---- */}
@@ -405,7 +427,9 @@ function SlotPanel({ slotId }: { slotId: string }) {
             </section>
           )}
 
-          {display === "CONFIRMED" && (
+          {display === "CONFIRMED" && isEnded && <Hint>이미 끝난 레슨이라 일정을 변경할 수 없습니다.</Hint>}
+
+          {display === "CONFIRMED" && !isEnded && (
             <section className="space-y-2">
               <Button className="w-full" onClick={() => store().startReschedule(slot.id)}>
                 <ArrowRightLeft />
@@ -626,6 +650,39 @@ function Step({ label, done, current }: { label: string; done?: boolean; current
 const StepLine = ({ done }: { done?: boolean }) => (
   <li aria-hidden className={cn("h-px flex-1", done ? "bg-mint-600" : "bg-zinc-300")} />
 );
+
+const RESULT_LABEL = {
+  APPROVED: { text: "승인", cls: "bg-mint-100 text-mint-800" },
+  REJECTED: { text: "반려", cls: "bg-red-100 text-red-800" },
+  CANCELLED: { text: "취소", cls: "bg-zinc-100 text-zinc-700" },
+} as const;
+
+/** 처리가 끝난 요청: 결과, 요청 메시지, 반려 사유를 남겨 둔다 */
+function PastRequests({ items }: { items: ScheduleRequest[] }) {
+  return (
+    <section>
+      <h4 className="mb-2 text-xs font-semibold text-zinc-500">지난 요청</h4>
+      <ul className="space-y-2">
+        {items.map((r) => {
+          const result = RESULT_LABEL[r.status as keyof typeof RESULT_LABEL];
+          return (
+            <li key={r.id} className="rounded-lg border border-zinc-200 px-3 py-2 text-xs text-zinc-700">
+              <p className="flex items-center gap-1.5">
+                <span className={cn("rounded px-1.5 py-0.5 font-semibold", result.cls)}>{result.text}</span>
+                <span className="font-medium text-zinc-900">
+                  {r.kind === "BOOKING" ? "보강 신청" : "일정 변경"}
+                </span>
+                <span>· {r.requestedBy === "INSTRUCTOR" ? INSTRUCTOR.name : userName(r.studentId)} 요청</span>
+              </p>
+              {r.message && <p className="mt-1">요청 메시지: {r.message}</p>}
+              {r.rejectReason && <p className="mt-1 text-red-800">반려 사유: {r.rejectReason}</p>}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
 
 /** 요청 접수·승인·거절 같은 자동 기록 (메신저와 분리) */
 function ProgressLog({ entries }: { entries: Comment[] }) {

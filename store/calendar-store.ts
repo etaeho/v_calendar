@@ -211,12 +211,12 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       const { drawer } = get();
       // 선택 모드·개인 일정 상세는 역할이 바뀌면 의미가 없으므로 닫는다
       const keep = drawer.type === "slot" || drawer.type === "day";
-      set({ role, drawer: keep ? drawer : { type: "closed" } });
+      set({ role, toast: null, drawer: keep ? drawer : { type: "closed" } });
     },
     setStudent: (studentId) => {
       const { drawer } = get();
       const keep = drawer.type === "slot" || drawer.type === "day";
-      set({ studentId, role: "STUDENT", drawer: keep ? drawer : { type: "closed" } });
+      set({ studentId, role: "STUDENT", toast: null, drawer: keep ? drawer : { type: "closed" } });
     },
     setView: (view) => set({ view }),
     setCursor: (date) => set({ cursor: date.toISOString() }),
@@ -287,6 +287,12 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     pickRescheduleTarget: (toSlotId) => {
       const { drawer } = get();
       if (drawer.type !== "reschedule") return;
+      const target = get().lesson.slots.find((s) => s.id === toSlotId);
+      if (!target || target.status !== "OPEN" || toSlotId === drawer.fromSlotId) return;
+      if (Date.parse(target.start) < Date.parse(get().now)) {
+        toast("error", "지난 시간으로는 옮길 수 없습니다.");
+        return;
+      }
       set({ drawer: { type: "reschedule", fromSlotId: drawer.fromSlotId, toSlotId } });
     },
 
@@ -339,7 +345,9 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       const request = get().lesson.requests.find((r) => r.id === requestId);
       const ok = transition(
         (s, a) => approveRequest(s, a, requestId, ctx),
-        "승인했습니다. 레슨이 확정되었습니다.",
+        get().role === "STUDENT"
+          ? "동의했습니다. 새 시간으로 레슨이 확정되었습니다."
+          : "승인했습니다. 레슨이 확정되었습니다.",
       );
       if (ok && request) {
         pushConfirmed(request.toSlotId);
