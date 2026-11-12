@@ -72,7 +72,6 @@ try {
   // 빈 슬롯: 주간 보기에서 11/14(토) 15:00 클릭
   await t.getByRole("tab", { name: "주간" }).click();
   const col = t.locator("main .relative.border-l").nth(6);
-  const bb = await col.boundingBox();
   await t.locator("main .overflow-auto").first().evaluate((e) => (e.scrollTop = (9 - 7) * 64 - 8));
   const bb2 = await col.boundingBox();
   await t.mouse.click(bb2.x + bb2.width / 2, bb2.y + (15 - 7) * 64 + 5);
