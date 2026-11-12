@@ -3,6 +3,7 @@
 import { addDays, addMonths, addWeeks, endOfWeek, format, startOfWeek } from "date-fns";
 import { ChevronLeft, ChevronRight, GraduationCap, Menu, Music } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { NotificationBell } from "@/components/calendar/Notifications";
 import { useIsMobile } from "@/lib/use-mobile";
 import { cn } from "@/lib/utils";
 
@@ -78,7 +79,8 @@ export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
           ) : (
             <h1 className="px-2 text-lg font-bold">{TAB_TITLE[view]}</h1>
           )}
-          <ActingUserSelect className="ml-auto" />
+          <NotificationBell className="ml-auto" />
+          <ActingUserSelect />
         </div>
         {calendarTab && (
           <div className="flex items-center gap-2 pb-2">
@@ -156,8 +158,9 @@ export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
         ))}
       </div>
 
+      <NotificationBell className="ml-auto" />
       {/* 테스트용 역할 전환 토글 */}
-      <div className="ml-auto flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-50 py-1 pr-1 pl-3">
+      <div className="flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-50 py-1 pr-1 pl-3">
         <span className="hidden text-xs text-zinc-500 sm:inline">테스트 역할</span>
         <span
           className={cn(

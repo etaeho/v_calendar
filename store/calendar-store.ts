@@ -34,6 +34,7 @@ export type DrawerState =
   | { type: "day"; date: string; time?: string }
   | { type: "slot"; slotId: string }
   | { type: "external"; eventId: string }
+  | { type: "notifications" }
   /**
    * 일정 변경 대상 선택 모드.
    * toSlotId: 기존 빈 슬롯으로 변경 / toRange: (강사 드래그) 슬롯이 없는 새 시간으로 변경

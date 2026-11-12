@@ -66,6 +66,7 @@ import {
 } from "@/lib/lesson-machine";
 import { instructorOf, userName } from "@/lib/directory";
 import { studentColor } from "@/lib/student-colors";
+import { NotificationsPanel } from "@/components/calendar/Notifications";
 import { useIsMobile } from "@/lib/use-mobile";
 import { cn } from "@/lib/utils";
 import { useActor, useCalendarStore } from "@/store/calendar-store";
@@ -109,6 +110,9 @@ export function Drawer() {
   } else if (drawer.type === "external") {
     title = "개인 일정";
     body = <ExternalPanel eventId={drawer.eventId} />;
+  } else if (drawer.type === "notifications") {
+    title = "알림";
+    body = <NotificationsPanel />;
   } else if (drawer.type === "reschedule") {
     title = "일정 변경 요청";
     body = (
