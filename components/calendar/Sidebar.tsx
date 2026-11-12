@@ -198,7 +198,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 <div className="flex justify-between gap-2">
                   <dt className="text-zinc-500">등록 기간</dt>
                   <dd className="text-right tabular-nums">
-                    {plan.startDate.replaceAll("-", ".")} ~ {plan.endDate.slice(2).replaceAll("-", ".")}
+                    {plan.startDate.replaceAll("-", ".")} ~ {plan.endDate.replaceAll("-", ".")}
                     {left <= 14 && (
                       <span className="ml-1 rounded bg-coral-100 px-1 font-semibold text-coral-800">
                         종료 D-{left}
