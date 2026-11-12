@@ -84,6 +84,7 @@ const labelCls = "block text-xs font-medium text-zinc-600";
 /** 강사용: 레슨생별 수강 등록(기간·고정 시간·횟수·변경 마감·수강료) 관리 */
 export function StudentsView() {
   const STUDENTS = useStudents();
+  const session = useCalendarStore((s) => s.session);
   const lesson = useCalendarStore((s) => s.lesson);
   const now = useCalendarStore((s) => s.now);
   const conflicts = useCalendarStore((s) => s.conflicts);
@@ -110,6 +111,7 @@ export function StudentsView() {
             레슨생 {STUDENTS.length}명 · 수강 중 {enrolled}명
           </p>
         </div>
+        {session && <InviteStudent />}
 
         {conflicts.length > 0 && (
           <div className="mb-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
@@ -1072,6 +1074,84 @@ function MakeupPicker({
           보강 제안 보내기
         </Button>
       </FormActions>
+    </form>
+  );
+}
+
+/** 서버 모드: 이메일로 레슨생 초대. 레슨생이 그 이메일로 로그인하면 이 레슨실에 연결된다 */
+function InviteStudent() {
+  const inviteStudent = useCalendarStore((s) => s.inviteStudent);
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!open)
+    return (
+      <Button variant="primary" size="sm" className="mb-3" onClick={() => setOpen(true)}>
+        <UserPlus />
+        레슨생 초대
+      </Button>
+    );
+  return (
+    <form
+      className="mb-3 grid gap-2 rounded-xl border border-zinc-200 bg-white p-3 sm:grid-cols-[1fr_1.4fr_1fr_auto] sm:items-end"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        const ok = await inviteStudent(name.trim(), email.trim(), phone.trim() || undefined);
+        setBusy(false);
+        if (ok) {
+          setName("");
+          setEmail("");
+          setPhone("");
+          setOpen(false);
+        }
+      }}
+    >
+      <label className={labelCls} htmlFor="invite-name">
+        이름
+        <input
+          id="invite-name"
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className={cn(inputCls, "mt-1")}
+        />
+      </label>
+      <label className={labelCls} htmlFor="invite-email">
+        로그인 이메일
+        <input
+          id="invite-email"
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          className={cn(inputCls, "mt-1")}
+        />
+      </label>
+      <label className={labelCls} htmlFor="invite-phone">
+        휴대폰 (알림톡, 선택)
+        <input
+          id="invite-phone"
+          type="tel"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          className={cn(inputCls, "mt-1")}
+        />
+      </label>
+      <div className="flex gap-2">
+        <Button size="sm" onClick={() => setOpen(false)}>
+          취소
+        </Button>
+        <Button type="submit" variant="primary" size="sm" disabled={busy}>
+          초대
+        </Button>
+      </div>
+      <p className="text-xs text-zinc-500 sm:col-span-4">
+        초대한 레슨생이 이 이메일로 로그인하면 바로 연결됩니다. 이어서 &lsquo;수강 등록&rsquo;으로
+        고정 시간을 정해 주세요.
+      </p>
     </form>
   );
 }

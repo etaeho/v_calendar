@@ -16,6 +16,7 @@ const VIEWS: { id: CalendarViewMode; label: string }[] = [
 ];
 
 export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+  const session = useCalendarStore((s) => s.session);
   const STUDENTS = useStudents();
   const cursor = useCalendarStore((s) => s.cursor);
   const view = useCalendarStore((s) => s.view);
@@ -32,7 +33,11 @@ export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   // 휴대폰 주간 화면은 3일씩 보여 주고 3일씩 넘긴다
   const move = (dir: 1 | -1) =>
     setCursor(
-      view === "month" ? addMonths(date, dir) : mobile ? addDays(date, dir * 3) : addWeeks(date, dir),
+      view === "month"
+        ? addMonths(date, dir)
+        : mobile
+          ? addDays(date, dir * 3)
+          : addWeeks(date, dir),
     );
 
   let title = format(date, "yyyy년 M월");
@@ -68,11 +73,25 @@ export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
         <div className="flex h-12 items-center gap-1">
           {calendarTab ? (
             <>
-              <Button variant="ghost" size="icon" className="size-10" aria-label="이전" onClick={() => move(-1)}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-10"
+                aria-label="이전"
+                onClick={() => move(-1)}
+              >
                 <ChevronLeft />
               </Button>
-              <h1 className="min-w-0 truncate text-center text-lg font-bold tracking-tight tabular-nums">{title}</h1>
-              <Button variant="ghost" size="icon" className="size-10" aria-label="다음" onClick={() => move(1)}>
+              <h1 className="min-w-0 truncate text-center text-lg font-bold tracking-tight tabular-nums">
+                {title}
+              </h1>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-10"
+                aria-label="다음"
+                onClick={() => move(1)}
+              >
                 <ChevronRight />
               </Button>
             </>
@@ -80,11 +99,21 @@ export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
             <h1 className="px-2 text-lg font-bold">{TAB_TITLE[view]}</h1>
           )}
           <NotificationBell className="ml-auto" />
-          <ActingUserSelect />
+          {session ? (
+            <span className="max-w-32 truncate rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-medium text-zinc-800">
+              {session.name}
+            </span>
+          ) : (
+            <ActingUserSelect />
+          )}
         </div>
         {calendarTab && (
           <div className="flex items-center gap-2 pb-2">
-            <div role="tablist" aria-label="보기 전환" className="flex flex-1 rounded-lg bg-zinc-100 p-0.5">
+            <div
+              role="tablist"
+              aria-label="보기 전환"
+              className="flex flex-1 rounded-lg bg-zinc-100 p-0.5"
+            >
               {[
                 { id: "month" as const, label: "월간" },
                 { id: "week" as const, label: "3일" },
@@ -141,83 +170,96 @@ export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       </div>
 
       <div role="tablist" aria-label="보기 전환" className="flex rounded-lg bg-zinc-100 p-0.5">
-        {(isInstructor ? [...VIEWS, { id: "students" as const, label: "레슨생 관리" }] : VIEWS).map((v) => (
-          <button
-            key={v.id}
-            role="tab"
-            type="button"
-            aria-selected={view === v.id}
-            onClick={() => setView(v.id)}
-            className={cn(
-              "rounded-md px-3 py-1 text-sm font-medium transition-colors",
-              view === v.id ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-600 hover:text-zinc-900",
-            )}
-          >
-            {v.label}
-          </button>
-        ))}
+        {(isInstructor ? [...VIEWS, { id: "students" as const, label: "레슨생 관리" }] : VIEWS).map(
+          (v) => (
+            <button
+              key={v.id}
+              role="tab"
+              type="button"
+              aria-selected={view === v.id}
+              onClick={() => setView(v.id)}
+              className={cn(
+                "rounded-md px-3 py-1 text-sm font-medium transition-colors",
+                view === v.id
+                  ? "bg-white text-zinc-900 shadow-sm"
+                  : "text-zinc-600 hover:text-zinc-900",
+              )}
+            >
+              {v.label}
+            </button>
+          ),
+        )}
       </div>
 
       <NotificationBell className="ml-auto" />
-      {/* 테스트용 역할 전환 토글 */}
-      <div className="flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-50 py-1 pr-1 pl-3">
-        <span className="hidden text-xs text-zinc-500 sm:inline">테스트 역할</span>
-        <span
-          className={cn(
-            "flex items-center gap-1 text-sm",
-            isInstructor ? "font-semibold text-zinc-900" : "text-zinc-500",
-          )}
-        >
-          <Music className="size-3.5" />
-          강사
+      {session ? (
+        <span className="rounded-full bg-zinc-100 px-3 py-1.5 text-sm font-medium text-zinc-800">
+          {session.studioName} · {session.name} ({session.role === "INSTRUCTOR" ? "강사" : "레슨생"}
+          )
         </span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={!isInstructor}
-          aria-label="역할 전환: 강사 모드 / 레슨생 모드"
-          onClick={() => setRole(isInstructor ? "STUDENT" : "INSTRUCTOR")}
-          className={cn(
-            "relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mint-600",
-            isInstructor ? "bg-zinc-700" : "bg-mint-600",
-          )}
-        >
-          <span
-            className={cn(
-              "absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow transition-transform",
-              !isInstructor && "translate-x-5",
+      ) : (
+        <>
+          {/* 테스트용 역할 전환 토글 */}
+          <div className="flex items-center gap-2 rounded-full border border-zinc-200 bg-zinc-50 py-1 pr-1 pl-3">
+            <span className="hidden text-xs text-zinc-500 sm:inline">테스트 역할</span>
+            <span
+              className={cn(
+                "flex items-center gap-1 text-sm",
+                isInstructor ? "font-semibold text-zinc-900" : "text-zinc-500",
+              )}
+            >
+              <Music className="size-3.5" />
+              강사
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!isInstructor}
+              aria-label="역할 전환: 강사 모드 / 레슨생 모드"
+              onClick={() => setRole(isInstructor ? "STUDENT" : "INSTRUCTOR")}
+              className={cn(
+                "relative h-6 w-11 shrink-0 rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mint-600",
+                isInstructor ? "bg-zinc-700" : "bg-mint-600",
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow transition-transform",
+                  !isInstructor && "translate-x-5",
+                )}
+              />
+            </button>
+            <span
+              className={cn(
+                "flex items-center gap-1 text-sm",
+                !isInstructor ? "font-semibold text-zinc-900" : "text-zinc-500",
+              )}
+            >
+              <GraduationCap className="size-3.5" />
+              레슨생
+            </span>
+            {isInstructor ? (
+              <span className="rounded-full bg-zinc-700 px-2.5 py-1 text-xs font-medium text-white">
+                정유진 선생님
+              </span>
+            ) : (
+              <select
+                id="acting-student"
+                aria-label="테스트할 레슨생 선택"
+                value={studentId}
+                onChange={(e) => setStudent(e.target.value)}
+                className="h-7 rounded-full border-0 bg-mint-600 py-0 pr-7 pl-2.5 text-xs font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mint-600"
+              >
+                {STUDENTS.map((s, i) => (
+                  <option key={s.id} value={s.id} className="bg-white text-zinc-900">
+                    레슨생 {i + 1} · {s.name}
+                  </option>
+                ))}
+              </select>
             )}
-          />
-        </button>
-        <span
-          className={cn(
-            "flex items-center gap-1 text-sm",
-            !isInstructor ? "font-semibold text-zinc-900" : "text-zinc-500",
-          )}
-        >
-          <GraduationCap className="size-3.5" />
-          레슨생
-        </span>
-        {isInstructor ? (
-          <span className="rounded-full bg-zinc-700 px-2.5 py-1 text-xs font-medium text-white">
-            정유진 선생님
-          </span>
-        ) : (
-          <select
-            id="acting-student"
-            aria-label="테스트할 레슨생 선택"
-            value={studentId}
-            onChange={(e) => setStudent(e.target.value)}
-            className="h-7 rounded-full border-0 bg-mint-600 py-0 pr-7 pl-2.5 text-xs font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mint-600"
-          >
-            {STUDENTS.map((s, i) => (
-              <option key={s.id} value={s.id} className="bg-white text-zinc-900">
-                레슨생 {i + 1} · {s.name}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+          </div>
+        </>
+      )}
     </header>
   );
 }
@@ -245,7 +287,9 @@ function ActingUserSelect({ className }: { className?: string }) {
       <select
         id="acting-user"
         value={value}
-        onChange={(e) => (e.target.value === INSTRUCTOR.id ? setRole("INSTRUCTOR") : setStudent(e.target.value))}
+        onChange={(e) =>
+          e.target.value === INSTRUCTOR.id ? setRole("INSTRUCTOR") : setStudent(e.target.value)
+        }
         className={cn(
           "h-9 max-w-40 truncate rounded-full border-0 py-0 pr-7 pl-7 text-sm font-medium text-white",
           role === "INSTRUCTOR" ? "bg-zinc-700" : "bg-mint-700",

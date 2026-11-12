@@ -74,6 +74,8 @@ export class RemoteApi {
     });
   addMember = (name: string, email: string, phone?: string) =>
     this.call<{ members: ViewPayload["members"] }>({ op: "addMember", name, email, phone });
+  updateProfile = (patch: { phone?: string | null; kakaoOptIn?: boolean }) =>
+    this.call<Record<string, unknown>>({ op: "updateProfile", ...patch });
   notifications = () => this.call<{ notifications: AppNotification[] }>({ op: "notifications" });
   markRead = (ids: string[]) => this.call<Record<string, never>>({ op: "markRead", ids });
 }

@@ -9,6 +9,7 @@ import {
   Hourglass,
   Loader2,
   RefreshCw,
+  LogOut,
   RotateCcw,
   X,
 } from "lucide-react";
@@ -32,7 +33,9 @@ import {
   planLabel,
   timesLabel,
 } from "@/lib/enrollment";
+import { signOut } from "@/components/calendar/AuthGate";
 import { CALENDARS } from "@/lib/calendars";
+import { integrationStatus } from "@/lib/integrations";
 import { canCancel, canResolve, makeupSummary } from "@/lib/lesson-machine";
 import { studentColor } from "@/lib/student-colors";
 import { userName } from "@/lib/directory";
@@ -94,6 +97,8 @@ export function SidebarContent({
   onFocusNavigate?: () => void;
 }) {
   const [confirmReset, setConfirmReset] = useState(false);
+  const session = useCalendarStore((s) => s.session);
+  const integrations = integrationStatus();
   const STUDENTS = useStudents();
   const setView = useCalendarStore((s) => s.setView);
   const show = new Set(showList);
@@ -212,6 +217,16 @@ export function SidebarContent({
                         )}
                       </div>
                     )}
+                    {provider && (
+                      <p
+                        className="mt-1 ml-6.5 text-[11px] text-zinc-500"
+                        title={integrations[provider].reason}
+                      >
+                        {integrations[provider].mode === "real"
+                          ? "실제 계정 연동"
+                          : "데모 일정 (실제 연동 설정 전)"}
+                      </p>
+                    )}
                   </li>
                 );
               })}
@@ -221,6 +236,7 @@ export function SidebarContent({
       )}
       {show.has("plan") && (
         <>
+          {role === "STUDENT" && session && <AlimtalkOptIn />}
           {role === "STUDENT" && myPlans.length === 0 && (
             <section
               aria-label="내 수강 정보"
@@ -517,7 +533,22 @@ export function SidebarContent({
       {show.has("reset") && (
         <>
           <div className="mt-auto flex items-center justify-between pt-2">
-            {confirmReset ? (
+            {session ? (
+              <span className="flex min-w-0 items-center gap-2 text-xs text-zinc-600">
+                <span className="truncate">
+                  {session.studioName} · {session.name}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs"
+                  onClick={() => void signOut()}
+                >
+                  <LogOut />
+                  로그아웃
+                </Button>
+              </span>
+            ) : confirmReset ? (
               <span className="flex items-center gap-1.5 text-xs text-zinc-700">
                 모든 변경을 지울까요?
                 <Button
@@ -658,5 +689,46 @@ function MakeupRow({ studentId }: { studentId: string }) {
         </span>
       </dd>
     </div>
+  );
+}
+
+/** 서버 모드 레슨생: 카카오 알림톡 수신 설정 */
+function AlimtalkOptIn() {
+  const updateProfile = useCalendarStore((s) => s.updateProfile);
+  const [phone, setPhone] = useState("");
+  const [optIn, setOptIn] = useState(false);
+  return (
+    <section aria-label="알림톡 설정" className="rounded-xl border border-zinc-200 p-3 text-xs">
+      <h2 className="mb-1.5 font-semibold text-zinc-500">카카오 알림톡</h2>
+      <p className="mb-2 text-zinc-600">요청·승인·메시지 알림을 카카오톡으로도 받을 수 있어요.</p>
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void updateProfile(phone, optIn);
+        }}
+      >
+        <input
+          type="tel"
+          aria-label="휴대폰 번호"
+          placeholder="010-0000-0000"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          className="h-9 min-w-0 flex-1 rounded-lg border border-zinc-300 px-2 text-sm"
+        />
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={optIn}
+            onChange={(e) => setOptIn(e.target.checked)}
+            className="size-4"
+          />
+          받기
+        </label>
+        <Button type="submit" size="sm">
+          저장
+        </Button>
+      </form>
+    </section>
   );
 }

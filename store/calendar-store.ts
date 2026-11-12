@@ -15,6 +15,7 @@ import { holidaysOn } from "@/lib/holidays";
 import { createInitialLessonState, STUDENTS, USERS } from "@/lib/mock-data";
 import { deriveNotifications, type AppNotification } from "@/lib/notifications";
 import { RemoteApi, toUsers, type Me } from "@/lib/remote";
+import { isIntegrationError } from "@/lib/integrations";
 import { calendarSyncServices } from "@/lib/services/calendar-sync";
 import type {
   Actor,
@@ -79,6 +80,8 @@ interface CalendarStore {
   toast: Toast | null;
 
   init: () => void;
+  /** 서버 모드: 빈 화면 틀만 준비 (데이터는 로그인 후 서버에서) */
+  initServerShell: () => void;
   tick: () => void;
   resetDemo: () => void;
   setRole: (role: UserRole) => void;
@@ -155,6 +158,8 @@ interface CalendarStore {
   startRemote: (api: RemoteApi, me: Me) => Promise<void>;
   /** 실시간 알림을 받으면 서버 상태를 다시 불러온다 */
   refreshFromServer: () => Promise<void>;
+  /** 내 알림톡 수신 설정 (서버 모드) */
+  updateProfile: (phone: string, kakaoOptIn: boolean) => Promise<boolean>;
   /** 강사: 레슨생 초대 (서버 모드) */
   inviteStudent: (name: string, email: string, phone?: string) => Promise<boolean>;
 }
@@ -339,6 +344,22 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       });
     },
 
+    initServerShell: () => {
+      if (get().initialized) return;
+      const now = new Date();
+      // 로그인(startRemote)이 화면보다 먼저 끝나므로 이미 받은 서버 데이터는 지우지 않는다
+      const loaded = get().session !== null;
+      if (!loaded) setDirectory([]);
+      set({
+        initialized: true,
+        now: now.toISOString(),
+        cursor: now.toISOString(),
+        selectedDate: now.toISOString(),
+        ...(loaded ? {} : { lesson: emptyLesson, members: [] }),
+        view: window.matchMedia("(max-width: 767px)").matches ? "month" : "week",
+      });
+    },
+
     tick: () => {
       const now = new Date().toISOString();
       // 시간이 지난 요청 만료, 미결정 공휴일 레슨 휴강 처리, 새로 지정된 공휴일 표시
@@ -409,7 +430,13 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
         sync: { ...s.sync, [key]: { ...s.sync[key], status: "syncing" } },
       }));
       try {
-        const events = await calendarSyncServices[provider].fetchEvents(userId);
+        // 지난달 1일 ~ 3달 뒤까지
+        const base = new Date(get().now || Date.now());
+        const range = {
+          start: new Date(base.getFullYear(), base.getMonth() - 1, 1),
+          end: new Date(base.getFullYear(), base.getMonth() + 4, 1),
+        };
+        const events = await calendarSyncServices[provider].fetchEvents(userId, range);
         set((s) => ({
           externalEvents: [
             ...s.externalEvents.filter((e) => !(e.ownerId === userId && e.provider === provider)),
@@ -425,9 +452,10 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
           "success",
           `${provider === "GOOGLE" ? "구글" : "카카오"} 캘린더에서 일정 ${events.length}건을 불러왔습니다.`,
         );
-      } catch {
+      } catch (e) {
         set((s) => ({ sync: { ...s.sync, [key]: { status: "error" } } }));
-        toast("error", "동기화에 실패했습니다. 다시 시도해 주세요.");
+        // 연동 오류는 한국어 안내(로그인 만료·팝업 차단·권한 거부 등)를 그대로 보여 준다
+        toast("error", isIntegrationError(e) ? e.message : "동기화에 실패했습니다. 다시 시도해 주세요.");
       }
     },
 
@@ -623,6 +651,17 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       await refreshRemote();
       await loadRemoteNotifications();
     },
+    updateProfile: async (phone, kakaoOptIn) => {
+      if (!remote) return false;
+      const res = await remote.updateProfile({ phone: phone.trim() || null, kakaoOptIn });
+      if (!res.ok) {
+        toast("error", res.error.message);
+        return false;
+      }
+      toast("success", kakaoOptIn ? "카카오 알림톡을 받도록 설정했습니다." : "알림톡 수신을 껐습니다.");
+      return true;
+    },
+
     inviteStudent: async (name, email, phone) => {
       if (!remote) return false;
       const res = await remote.addMember(name, email, phone);
