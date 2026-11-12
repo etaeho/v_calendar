@@ -24,8 +24,9 @@ import {
   useLinkedSlotIds,
 } from "@/lib/calendar-items";
 import { mainHoliday } from "@/lib/holidays";
+import { planDrop } from "@/lib/lesson-machine";
 import { cn } from "@/lib/utils";
-import { useCalendarStore } from "@/store/calendar-store";
+import { useActor, useCalendarStore } from "@/store/calendar-store";
 
 export const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const MAX_CHIPS = 3;
@@ -42,6 +43,20 @@ export function MonthView() {
   const dropSlot = useCalendarStore((s) => s.dropSlot);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overDay, setOverDay] = useState<string | null>(null);
+  const lesson = useCalendarStore((s) => s.lesson);
+  const actor = useActor();
+
+  /** 다른 날로 옮겨도 시간은 그대로 둔다 */
+  const dropStart = (itemId: string, day: Date) => {
+    const item = items.find((i) => i.id === itemId);
+    if (!item) return null;
+    return addMinutes(startOfDay(day), differenceInMinutes(item.start, startOfDay(item.start)));
+  };
+  const overPlan = (() => {
+    if (!dragId || !overDay) return null;
+    const start = dropStart(dragId, new Date(overDay));
+    return start ? planDrop(lesson, actor, dragId, start.toISOString(), now) : null;
+  })();
 
   const month = new Date(cursor);
   const today = new Date(now);
@@ -93,19 +108,20 @@ export function MonthView() {
               }}
               onDrop={(e) => {
                 e.preventDefault();
-                const item = items.find((i) => i.id === dragId);
+                const id = dragId;
                 setDragId(null);
                 setOverDay(null);
-                if (!item) return;
-                // 다른 날로 옮겨도 시간은 그대로 둔다
-                const minutes = differenceInMinutes(item.start, startOfDay(item.start));
-                dropSlot(item.id, addMinutes(startOfDay(day), minutes));
+                const start = id ? dropStart(id, day) : null;
+                if (id && start) dropSlot(id, start);
               }}
               className={cn(
                 "relative min-w-0 border-r border-b border-zinc-200 p-1",
                 !inMonth && "bg-zinc-50/70",
                 selected && "bg-mint-50",
-                overDay === key && "bg-violet-50 outline-2 -outline-offset-2 outline-violet-500 outline-dashed",
+                overDay === key &&
+                  (overPlan?.kind === "invalid"
+                    ? "bg-red-50 outline-2 -outline-offset-2 outline-red-500 outline-dashed"
+                    : "bg-violet-50 outline-2 -outline-offset-2 outline-violet-500 outline-dashed"),
               )}
             >
               <button
@@ -146,6 +162,11 @@ export function MonthView() {
                   </span>
                 )}
               </div>
+              {overDay === key && overPlan?.kind === "invalid" && (
+                <p className="pointer-events-none relative mb-0.5 rounded bg-red-600 px-1 text-[11px] leading-4 text-white">
+                  {overPlan.reason}
+                </p>
+              )}
               <ul className="relative space-y-0.5">
                 {dayItems.slice(0, MAX_CHIPS).map((item) => (
                   <li key={item.id}>

@@ -14,7 +14,7 @@ const LEGEND: { display: SlotDisplay; label: string; hint: string }[] = [
   { display: "OPEN", label: "가능", hint: "신청할 수 있는 빈 시간" },
   { display: "CONFIRMED", label: "확정", hint: "정규 · 보강 레슨" },
   { display: "PENDING_BOOKING", label: "승인 대기", hint: "보강 신청 응답 전" },
-  { display: "PENDING_CHANGE_FROM", label: "변경 요청", hint: "기존 · 희망 시간 모두 점선" },
+  { display: "PENDING_CHANGE_FROM", label: "변경 요청", hint: "움직이는 점선" },
   { display: "CLOSED", label: "마감", hint: "다른 레슨생 일정" },
 ];
 

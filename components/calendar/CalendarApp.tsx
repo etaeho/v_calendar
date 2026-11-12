@@ -24,6 +24,13 @@ export function CalendarApp() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSidebarOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sidebarOpen]);
+
   if (!initialized) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-zinc-500">

@@ -92,10 +92,12 @@ interface CreateDrag {
 const createRange = (d: CreateDrag) => {
   const start = Math.min(d.anchor, d.current);
   const end = Math.max(d.anchor, d.current) + SNAP_MIN;
-  // 클릭(드래그 없음)은 기본 60분 슬롯
-  return end - start <= SNAP_MIN
-    ? { start, end: Math.min(start + 60, TOTAL_MIN) }
-    : { start, end };
+  // 클릭(드래그 없음)은 기본 60분 슬롯. 하루 끝 근처면 시작을 당겨 60분을 유지한다
+  if (end - start <= SNAP_MIN) {
+    const s = Math.min(start, TOTAL_MIN - 60);
+    return { start: s, end: s + 60 };
+  }
+  return { start, end };
 };
 
 /** 일정 드래그 → 이동 */
@@ -142,6 +144,16 @@ export function WeekView() {
     // 처음 열 때 오전 9시 부근이 보이도록
     scrollRef.current?.scrollTo({ top: minToPx((9 - HOUR_START) * 60) - 8 });
   }, []);
+
+  const todayIndex = new Date(now).getDay();
+  const showsToday = isSameDay(startOfWeek(new Date(cursor), { weekStartsOn: 0 }), startOfWeek(new Date(now), { weekStartsOn: 0 }));
+  useEffect(() => {
+    // 좁은 화면(가로 스크롤)에서는 오늘 열이 보이도록 가로 위치를 맞춘다
+    const el = scrollRef.current;
+    const col = columnsRef.current[showsToday ? todayIndex : 0];
+    if (!el || !col || el.scrollWidth <= el.clientWidth) return;
+    el.scrollTo({ left: Math.max(0, col.offsetLeft - 56) });
+  }, [cursor, showsToday, todayIndex]);
 
   const weekStart = startOfWeek(new Date(cursor), { weekStartsOn: 0 });
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -216,6 +228,13 @@ export function WeekView() {
 
   const onItemPointerMove = (e: PointerEvent<HTMLButtonElement>) => {
     if (!move) return;
+    // 위·아래 가장자리 근처에서는 화면을 스크롤해 보이지 않는 시간으로도 옮길 수 있게 한다
+    const box = scrollRef.current?.getBoundingClientRect();
+    if (box && move.moved) {
+      const EDGE = 48;
+      if (e.clientY < box.top + 90 + EDGE) scrollRef.current!.scrollBy({ top: -16 });
+      else if (e.clientY > box.bottom - EDGE) scrollRef.current!.scrollBy({ top: 16 });
+    }
     const moved =
       move.moved || Math.hypot(e.clientX - move.x0, e.clientY - move.y0) > DRAG_THRESHOLD_PX;
     if (!moved) return;
@@ -233,7 +252,12 @@ export function WeekView() {
     if (!move) return;
     setMove(null);
     if (!move.moved) return;
+    // 드래그 직후 같은 버튼에서 발생하는 click 하나만 무시한다.
+    // 다른 날로 옮기면 버튼이 새로 그려져 click 이 오지 않으므로 다음 틱에 해제한다.
     justDragged.current = true;
+    setTimeout(() => {
+      justDragged.current = false;
+    }, 0);
     dropSlot(move.slotId, addMinutes(dayBase(move.dayIndex), move.startMin));
   };
 
@@ -376,7 +400,7 @@ export function WeekView() {
                       className={cn(
                         "absolute overflow-hidden rounded-md px-1.5 py-0.5 text-left text-xs leading-tight shadow-[0_1px_2px_rgba(0,0,0,0.08)] transition-shadow hover:z-10 hover:shadow-md focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-zinc-900",
                         itemClass(item),
-                        compact && "flex items-center gap-1",
+                        compact ? "flex items-center gap-1" : "flex flex-col justify-start",
                         draggable && "cursor-grab active:cursor-grabbing",
                         linked.has(item.id) && "z-10 ring-2 ring-zinc-900 ring-offset-1",
                         picking &&

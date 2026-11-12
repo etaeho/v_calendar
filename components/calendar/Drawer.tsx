@@ -85,7 +85,7 @@ export function Drawer() {
   return (
     <aside
       aria-label={title}
-      className="absolute inset-y-0 right-0 z-40 flex w-full max-w-sm animate-slide-in flex-col border-l border-zinc-200 bg-white shadow-2xl xl:static xl:w-96 xl:shadow-none"
+      className="absolute inset-y-0 right-0 z-40 flex w-full animate-slide-in sm:max-w-sm flex-col border-l border-zinc-200 bg-white shadow-2xl xl:static xl:w-96 xl:shadow-none"
     >
       <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-2.5">
         <h2 className="text-base font-bold">{title}</h2>
