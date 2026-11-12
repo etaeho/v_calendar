@@ -62,9 +62,48 @@ export const enrollmentOf = (state: LessonState, slot: LessonSlot): Enrollment |
 /** 등록 종료일의 마지막 순간 (현지 시간) */
 export const enrollmentEndMs = (e: Enrollment) => new Date(`${e.endDate}T23:59:59.999`).getTime();
 
-/** 레슨생의 변경 요청 마감(등록 시 합의한 n시간 전)이 지났는가 */
+/**
+ * 이 레슨에 적용되는 수강 등록. 정규 레슨은 자기 등록, 보강 레슨은 그 날짜를 포함하는 등록
+ * (없으면 가장 최근 등록)을 따른다.
+ */
+export function governingEnrollment(state: LessonState, slot: LessonSlot): Enrollment | undefined {
+  const own = enrollmentOf(state, slot);
+  if (own) return own;
+  if (!slot.studentId) return undefined;
+  const mine = state.enrollments
+    .filter((e) => e.studentId === slot.studentId)
+    .sort((a, b) => b.endDate.localeCompare(a.endDate));
+  const t = Date.parse(slot.start);
+  return (
+    mine.find((e) => new Date(`${e.startDate}T00:00:00`).getTime() <= t && t <= enrollmentEndMs(e)) ??
+    mine[0]
+  );
+}
+
+/** 이 레슨을 옮길 수 있는 마지막 시각: 정규 레슨은 자기 등록 종료일, 보강은 레슨생의 가장 늦은 등록 종료일 */
+export function changeLimitMs(state: LessonState, slot: LessonSlot): number {
+  const own = enrollmentOf(state, slot);
+  if (own) return enrollmentEndMs(own);
+  const ends = state.enrollments
+    .filter((e) => e.studentId === slot.studentId)
+    .map((e) => enrollmentEndMs(e));
+  return ends.length > 0 ? Math.max(...ends) : Infinity;
+}
+
+export const changeLimitLabel = (state: LessonState, slot: LessonSlot) => {
+  const ms = changeLimitMs(state, slot);
+  if (!Number.isFinite(ms)) return undefined;
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/** 레슨생의 변경 요청 마감(등록 시 합의한 n시간 전, 보강 레슨 포함) */
+export const deadlineHours = (state: LessonState, slot: LessonSlot) =>
+  governingEnrollment(state, slot)?.changeDeadlineHours ?? 0;
+
+/** 레슨생의 변경 요청 마감이 지났는가 */
 export function changeDeadlinePassed(state: LessonState, slot: LessonSlot, now: string): boolean {
-  const hours = enrollmentOf(state, slot)?.changeDeadlineHours ?? 0;
+  const hours = deadlineHours(state, slot);
   return hours > 0 && Date.parse(slot.start) - Date.parse(now) < hours * 3_600_000;
 }
 
@@ -254,16 +293,15 @@ export function requestChange(
     throw new LessonError("INVALID_STATE", "이미 끝난 레슨은 변경할 수 없습니다.");
   if (isPast(to.start, ctx))
     throw new LessonError("INVALID_STATE", "지난 시간으로는 옮길 수 없습니다.");
-  const enrollment = enrollmentOf(state, from);
-  if (enrollment && Date.parse(to.start) > enrollmentEndMs(enrollment))
+  if (Date.parse(to.start) > changeLimitMs(state, from))
     throw new LessonError(
       "INVALID_STATE",
-      `등록 기간(${enrollment.endDate}까지) 이후로는 옮길 수 없습니다.`,
+      `등록 기간(${changeLimitLabel(state, from)}까지) 이후로는 옮길 수 없습니다.`,
     );
   if (actor.role === "STUDENT" && changeDeadlinePassed(state, from, ctx.now()))
     throw new LessonError(
       "INVALID_STATE",
-      `레슨 시작 ${enrollment!.changeDeadlineHours}시간 전까지만 변경을 요청할 수 있습니다.`,
+      `레슨 시작 ${deadlineHours(state, from)}시간 전까지만 변경을 요청할 수 있습니다.`,
     );
 
   const request: ScheduleRequest = {
@@ -373,11 +411,10 @@ export function planDrop(
     );
   }
 
-  const enrollment = enrollmentOf(state, slot);
   if (actor.role === "STUDENT" && changeDeadlinePassed(state, slot, now))
-    return invalid(`레슨 시작 ${enrollment!.changeDeadlineHours}시간 전까지만 변경할 수 있습니다.`);
-  if (enrollment && Date.parse(start) > enrollmentEndMs(enrollment))
-    return invalid(`등록 기간(${enrollment.endDate}까지) 이후로는 옮길 수 없습니다.`);
+    return invalid(`레슨 시작 ${deadlineHours(state, slot)}시간 전까지만 변경할 수 있습니다.`);
+  if (Date.parse(start) > changeLimitMs(state, slot))
+    return invalid(`등록 기간(${changeLimitLabel(state, slot)}까지) 이후로는 옮길 수 없습니다.`);
 
   // 놓은 위치에 빈 슬롯이 있으면 그 슬롯으로 변경 요청 (시작 시간이 같은 슬롯 우선)
   const targets = others
@@ -704,7 +741,7 @@ export function proposeDefer(
   if (actor.role === "STUDENT" && changeDeadlinePassed(state, slot, ctx.now()))
     throw new LessonError(
       "INVALID_STATE",
-      `레슨 시작 ${enrollmentOf(state, slot)!.changeDeadlineHours}시간 전까지만 요청할 수 있습니다.`,
+      `레슨 시작 ${deadlineHours(state, slot)}시간 전까지만 요청할 수 있습니다.`,
     );
 
   const request: ScheduleRequest = {
@@ -748,6 +785,8 @@ export function adjustMakeup(
     throw new LessonError("INVALID_RANGE", "조정할 횟수를 확인해 주세요.");
   const trimmed = reason.trim();
   if (!trimmed) throw new LessonError("INVALID_RANGE", "조정 사유를 적어 주세요.");
+  if (makeupSummary(state, studentId, ctx.now()).owed + delta < 0)
+    throw new LessonError("INVALID_RANGE", "보강 필요 횟수는 0보다 작아질 수 없습니다.");
   return {
     ...state,
     makeupAdjustments: [

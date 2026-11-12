@@ -198,7 +198,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 <div className="flex justify-between gap-2">
                   <dt className="text-zinc-500">등록 기간</dt>
                   <dd className="text-right tabular-nums">
-                    {plan.startDate.slice(5).replace("-", "/")} ~ {plan.endDate.slice(5).replace("-", "/")}
+                    {plan.startDate.replaceAll("-", ".")} ~ {plan.endDate.slice(2).replaceAll("-", ".")}
                     {left <= 14 && (
                       <span className="ml-1 rounded bg-coral-100 px-1 font-semibold text-coral-800">
                         종료 D-{left}
@@ -209,8 +209,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 <div className="flex justify-between gap-2">
                   <dt className="text-zinc-500">이번 달</dt>
                   <dd className="tabular-nums">
-                    {progress.done}/{progress.total}회 진행
-                    {progress.skipped > 0 && ` · 휴강 ${progress.skipped}`}
+                    {progress.total + progress.skipped === 0
+                      ? "레슨 없음"
+                      : `${progress.done}/${progress.total}회 진행`}
+                    {progress.skipped > 0 && ` · 미진행 ${progress.skipped}`}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-2">
@@ -226,8 +228,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   <div className="flex justify-between gap-2">
                     <dt className="text-zinc-500">결제 예정</dt>
                     <dd className="tabular-nums">
-                      {due ? `${fmtDay(due)} · ` : ""}
-                      {won(plan.fee)}
+                      {due ? `${fmtDay(due)} · ${won(plan.fee)}` : `남은 결제 없음 (월 ${won(plan.fee)})`}
                     </dd>
                   </div>
                 )}
@@ -457,7 +458,9 @@ function MakeupRow({ studentId }: { studentId: string }) {
     <div className="flex justify-between gap-2">
       <dt className="text-zinc-500">보강</dt>
       <dd className="text-right tabular-nums">
-        <span className={cn(m.remaining > 0 && "font-semibold text-orange-800")}>남은 {Math.max(m.remaining, 0)}회</span>
+        <span className={cn(m.remaining > 0 && "font-semibold text-orange-800")}>
+          {m.remaining >= 0 ? `남은 ${m.remaining}회` : `추가 레슨 ${-m.remaining}회`}
+        </span>
         <span className="text-zinc-500">
           {" "}
           · 예정 {m.scheduled}

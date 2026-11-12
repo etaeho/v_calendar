@@ -48,7 +48,9 @@ import {
   canCancel,
   canResolve,
   changeDeadlinePassed,
-  enrollmentEndMs,
+  changeLimitLabel,
+  changeLimitMs,
+  deadlineHours,
   enrollmentOf,
   makeupSummary,
   SKIP_REASON_LABEL,
@@ -481,7 +483,7 @@ function SlotPanel({ slotId }: { slotId: string }) {
               <div className="space-y-2 bg-white p-3 text-sm">
                 <p className="text-zinc-700">
                   이 레슨은 <strong className="text-red-700">{slot.holidayName}</strong>에 잡혀 있습니다.
-                  한쪽이 제안하고 상대방이 동의하면 확정됩니다. 당일까지 정하지 않으면 휴강으로 처리됩니다.
+                  한쪽이 제안하고 상대방이 동의하면 확정됩니다. 레슨 시작 전까지 정하지 않으면 휴강으로 처리됩니다.
                 </p>
                 <textarea
                   value={message}
@@ -513,7 +515,7 @@ function SlotPanel({ slotId }: { slotId: string }) {
                   </Button>
                 </div>
                 {deadlinePassed ? (
-                  <Hint>다른 날로 옮기기는 레슨 {enrollment?.changeDeadlineHours}시간 전까지만 요청할 수 있습니다.</Hint>
+                  <Hint>다른 날로 옮기기는 레슨 {deadlineHours(lesson, slot)}시간 전까지만 요청할 수 있습니다.</Hint>
                 ) : (
                   <Button className="w-full" onClick={() => store().startReschedule(slot.id)}>
                     <ArrowRightLeft />
@@ -542,7 +544,7 @@ function SlotPanel({ slotId }: { slotId: string }) {
 
           {display === "CONFIRMED" && !isEnded && deadlinePassed && (
             <Hint>
-              레슨 시작 {enrollment?.changeDeadlineHours}시간 전까지만 일정 변경을 요청할 수 있습니다 (등록 시 합의).
+              레슨 시작 {deadlineHours(lesson, slot)}시간 전까지만 일정 변경을 요청할 수 있습니다 (등록 시 합의).
               급한 사정은 메시지로 알려 주세요.
             </Hint>
           )}
@@ -1000,8 +1002,9 @@ function ReschedulePanel({
   if (!from) return <Empty>레슨을 찾을 수 없습니다.</Empty>;
 
   // 등록 기간 안의 미래 빈 슬롯만 고를 수 있다
-  const enrollment = enrollmentOf(lesson, from.slot);
-  const limit = enrollment ? enrollmentEndMs(enrollment) : Infinity;
+  // 정규 레슨은 자기 등록 종료일, 보강 레슨은 레슨생의 가장 늦은 등록 종료일까지
+  const limit = changeLimitMs(lesson, from.slot);
+  const limitLabel = changeLimitLabel(lesson, from.slot);
   const candidates = views
     .filter((v) => v.display === "OPEN" && v.slot.start > now && Date.parse(v.slot.start) <= limit)
     .sort((a, b) => a.slot.start.localeCompare(b.slot.start));
@@ -1088,8 +1091,8 @@ function ReschedulePanel({
         </fieldset>
 
         {targetStart && <ChangeWarnings from={from.slot} toStart={targetStart} />}
-        {enrollment && (
-          <Hint>등록 기간({enrollment.endDate.replaceAll("-", ".")}까지) 안에서만 옮길 수 있습니다.</Hint>
+        {limitLabel && (
+          <Hint>등록 기간({limitLabel.replaceAll("-", ".")}까지) 안에서만 옮길 수 있습니다.</Hint>
         )}
 
         <textarea

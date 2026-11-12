@@ -75,7 +75,10 @@ export function createInitialLessonState(now: Date, holiday: HolidayLookup): Les
   // 1) 수강 등록 → 기간 전체의 정규 레슨 자동 생성
   let state: LessonState = { enrollments: [], makeupAdjustments: [], slots: [], requests: [], comments: [] };
   for (const input of seedEnrollments(now)) {
-    state = registerEnrollment(state, instructor, input, ctx, holiday).state;
+    // 지난 기간의 레슨 기록도 만들어지도록, 등록 시작일에 등록한 것으로 생성한다
+    const registeredAt = new Date(`${input.startDate}T00:00:00`).toISOString();
+    const regCtx: MachineContext = { now: () => registeredAt, id: ctx.id };
+    state = registerEnrollment(state, instructor, input, regCtx, holiday).state;
   }
 
   // 2) 강사가 열어 둔 빈 슬롯 (이번 주 일요일 기준 day 일 뒤). 정규 레슨과 겹치면 건너뛴다

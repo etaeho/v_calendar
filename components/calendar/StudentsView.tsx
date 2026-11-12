@@ -8,6 +8,7 @@ import { fmtDateTime, fmtDay, won } from "@/lib/calendar-items";
 import {
   countLessonsAfter,
   daysLeft,
+  previewConflicts,
   lessonTimes,
   monthProgress,
   nextPaymentDate,
@@ -146,8 +147,15 @@ function StudentCard({ student }: { student: User }) {
               </dd>
               <dt className="text-zinc-500">이번 달</dt>
               <dd className="tabular-nums">
-                {progress.done}/{progress.total}회 진행
-                {progress.skipped > 0 && <span className="text-zinc-500"> · 휴강 {progress.skipped}</span>}
+                {progress.total + progress.skipped === 0
+                  ? "레슨 없음"
+                  : `${progress.done}/${progress.total}회 진행`}
+                {progress.skipped > 0 && (
+                  <span className="text-zinc-500" title="공휴일 휴강 · 보강으로 미룸 · 미배정">
+                    {" "}
+                    · 미진행 {progress.skipped}
+                  </span>
+                )}
               </dd>
               <dt className="text-zinc-500">일정 변경</dt>
               <dd>{deadlineLabel(e.changeDeadlineHours)}</dd>
@@ -157,7 +165,7 @@ function StudentCard({ student }: { student: User }) {
                 {e.paymentDay && (
                   <span className="text-zinc-500">
                     {" "}
-                    · 매월 {e.paymentDay}일{due ? ` (다음 ${fmtDay(due)})` : ""}
+                    · 매월 {e.paymentDay}일{due ? ` (다음 ${fmtDay(due)})` : " (남은 결제 없음)"}
                   </span>
                 )}
               </dd>
@@ -193,7 +201,12 @@ function StudentCard({ student }: { student: User }) {
         <div className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
           <PlanForm
             student={student}
-            defaultStart={current.length > 0 ? toDateKey(addDays(new Date(`${current.at(-1)!.endDate}T00:00`), 1)) : todayKey}
+            template={all.at(-1)}
+            defaultStart={
+              current.length > 0
+                ? toDateKey(addDays(new Date(`${current.at(-1)!.endDate}T00:00`), 1))
+                : toDateKey(addDays(new Date(now), 1))
+            }
             onDone={close}
           />
         </div>
@@ -204,9 +217,8 @@ function StudentCard({ student }: { student: User }) {
             수강 등록
           </Button>
         ) : (
-          // 곧 끝나는 등록만 있으면 다음 기간을 다른 조건으로 새로 등록할 수 있다
-          mode === null &&
-          current.every((e) => daysLeft(e, now) <= 14) && (
+          // 현재 등록이 끝난 다음 기간을 미리(다른 조건으로) 등록할 수 있다
+          mode === null && (
             <Button
               variant="ghost"
               size="sm"
@@ -214,7 +226,7 @@ function StudentCard({ student }: { student: User }) {
               onClick={() => setMode({ type: "register" })}
             >
               <UserPlus />
-              다음 기간 새로 등록 (다른 조건)
+              다음 기간 등록 (종료일 다음 날부터)
             </Button>
           )
         )
@@ -235,14 +247,19 @@ function StudentCard({ student }: { student: User }) {
 function PlanForm({
   student,
   enrollment,
+  template,
   defaultStart,
   onDone,
 }: {
   student: User;
   enrollment?: Enrollment;
+  /** 새 등록일 때 이전 등록의 조건(시간·주차·마감·수강료·결제일)을 기본값으로 가져온다 */
+  template?: Enrollment;
   defaultStart?: string;
   onDone: () => void;
 }) {
+  const base = enrollment ?? template;
+  const lesson = useCalendarStore((s) => s.lesson);
   const now = useCalendarStore((s) => s.now);
   const store = useCalendarStore.getState;
   const editing = !!enrollment;
@@ -258,12 +275,12 @@ function PlanForm({
     enrollment?.endDate ?? monthsEnd(defaultStart ?? tomorrow, 3),
   );
   const [times, setTimes] = useState<WeeklyTime[]>(
-    enrollment?.times ?? [{ weekday: 2, time: "19:00", durationMin: 60 }],
+    base?.times ?? [{ weekday: 2, time: "19:00", durationMin: 60 }],
   );
-  const [pattern, setPattern] = useState(patternOf(enrollment?.weeks ?? [1, 2, 3, 4]));
-  const [deadline, setDeadline] = useState(enrollment?.changeDeadlineHours ?? 24);
-  const [fee, setFee] = useState(enrollment?.fee?.toString() ?? "");
-  const [paymentDay, setPaymentDay] = useState(enrollment?.paymentDay?.toString() ?? "");
+  const [pattern, setPattern] = useState(patternOf(base?.weeks ?? [1, 2, 3, 4]));
+  const [deadline, setDeadline] = useState(base?.changeDeadlineHours ?? 24);
+  const [fee, setFee] = useState(base?.fee?.toString() ?? "");
+  const [paymentDay, setPaymentDay] = useState(base?.paymentDay?.toString() ?? "");
   const [applyFrom, setApplyFrom] = useState(
     enrollment && enrollment.startDate > tomorrow ? enrollment.startDate : tomorrow,
   );
@@ -274,9 +291,16 @@ function PlanForm({
     (JSON.stringify(times) !== JSON.stringify(enrollment.times) ||
       weeks.join() !== enrollment.weeks.join());
   const valid = startDate && endDate && startDate <= endDate && times.every((t) => t.time);
+  const genFrom = editing ? (scheduleChanged ? applyFrom : startDate) : startDate;
+  const genTo = editing ? enrollment.endDate : endDate;
   const previewCount = valid
-    ? lessonTimes({ times, weeks }, editing ? (scheduleChanged ? applyFrom : startDate) : startDate, endDate).length
+    ? lessonTimes({ times, weeks }, genFrom, genTo).filter((t) => t.start.getTime() >= Date.parse(now)).length
     : 0;
+  // 저장 전에 다른 레슨과 겹치는 날을 미리 알려 준다
+  const previewConflict =
+    valid && (!editing || scheduleChanged)
+      ? previewConflicts(lesson, { times, weeks }, genFrom, genTo, now, enrollment?.id)
+      : 0;
 
   const setTime = (i: number, patch: Partial<WeeklyTime>) =>
     setTimes(times.map((t, j) => (j === i ? { ...t, ...patch } : t)));
@@ -316,6 +340,7 @@ function PlanForm({
               id={`start-${uid}`}
               type="date"
               required
+              min={toDateKey(new Date(now))}
               value={startDate}
               onChange={(e) => {
                 setStartDate(e.target.value);
@@ -508,6 +533,15 @@ function PlanForm({
         {planLabel({ times, weeks })}
         {(!editing || scheduleChanged) && valid && ` · 정규 레슨 ${previewCount}건이 만들어집니다`}
       </p>
+      {previewConflict > 0 && (
+        <p className="flex items-start gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-700" />
+          <span>
+            그중 <strong>{previewConflict}건</strong>은 다른 레슨과 겹쳐 &lsquo;미배정&rsquo;이 되고 보강 필요로
+            집계됩니다. 시간을 바꾸는 것을 검토해 주세요.
+          </span>
+        </p>
+      )}
 
       <FormActions onCancel={onDone}>
         <Button type="submit" variant="primary" size="sm" disabled={!valid}>
@@ -574,8 +608,9 @@ function EndForm({ enrollment, onDone }: { enrollment: Enrollment; onDone: () =>
   const monthEnd = toDateKey(endOfMonth(new Date(now)));
   const clamp = (key: string) =>
     key > enrollment.endDate ? enrollment.endDate : key < enrollment.startDate ? enrollment.startDate : key;
-  const [endDate, setEndDate] = useState(clamp(monthEnd));
-  const removed = endDate ? countLessonsAfter(lesson, enrollment.id, endDate) : 0;
+  const minEnd = todayKey > enrollment.startDate ? todayKey : enrollment.startDate;
+  const [endDate, setEndDate] = useState(clamp(monthEnd) < minEnd ? minEnd : clamp(monthEnd));
+  const removed = endDate ? countLessonsAfter(lesson, enrollment.id, endDate, now) : 0;
 
   return (
     <form
@@ -590,7 +625,7 @@ function EndForm({ enrollment, onDone }: { enrollment: Enrollment; onDone: () =>
         <Button size="sm" onClick={() => setEndDate(clamp(monthEnd))}>
           이번 달까지
         </Button>
-        <Button size="sm" onClick={() => setEndDate(clamp(todayKey))}>
+        <Button size="sm" onClick={() => setEndDate(minEnd)}>
           오늘까지
         </Button>
         <label className={labelCls} htmlFor={`end-${enrollment.id}`}>
@@ -599,7 +634,7 @@ function EndForm({ enrollment, onDone }: { enrollment: Enrollment; onDone: () =>
             id={`end-${enrollment.id}`}
             type="date"
             required
-            min={enrollment.startDate}
+            min={minEnd}
             max={enrollment.endDate}
             value={endDate}
             onChange={(e) => setEndDate(e.target.value)}

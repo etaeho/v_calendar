@@ -13,10 +13,9 @@ import type {
   Enrollment,
   LessonSlot,
   LessonState,
-  ScheduleRequest,
   WeeklyTime,
 } from "../types/calendar";
-import { LessonError, overlaps, type MachineContext } from "./lesson-machine.ts";
+import { enrollmentEndMs, LessonError, overlaps, type MachineContext } from "./lesson-machine.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 export const toDateKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -112,11 +111,16 @@ function generate(
   for (const { start, end } of lessonTimes(enrollment, fromKey, toKey)) {
     const s = start.toISOString();
     const e = end.toISOString();
+    // 이미 지난 시간은 만들지 않는다
+    if (Date.parse(s) < Date.parse(now)) continue;
+    const key = `${enrollment.id}-${toDateKey(start).replaceAll("-", "")}-${pad(start.getHours())}${pad(start.getMinutes())}`;
+    // 같은 시각에 남아 있는 기록(보강으로 미룸 등)이 있으면 다시 만들지 않는다
+    if (slots.some((x) => x.id === `les-${key}` || x.id === `miss-${key}`)) continue;
     const hits = slots.filter((x) => x.status !== "SKIPPED" && overlaps(x.start, x.end, s, e));
     if (hits.some((x) => x.status !== "OPEN")) {
       conflicts.push({ start: s, end: e });
       // 시간을 못 잡은 정규 레슨은 '미배정' 기록으로 남겨 보강 필요 횟수에 들어가게 한다
-      const missId = `miss-${enrollment.id}-${toDateKey(start).replaceAll("-", "")}-${pad(start.getHours())}${pad(start.getMinutes())}`;
+      const missId = `miss-${key}`;
       slots = [
         ...slots,
         {
@@ -139,7 +143,7 @@ function generate(
       slots = slots.filter((x) => !gone.has(x.id));
       comments = comments.filter((c) => !threads.has(c.threadId));
     }
-    const id = `les-${enrollment.id}-${toDateKey(start).replaceAll("-", "")}-${pad(start.getHours())}${pad(start.getMinutes())}`;
+    const id = `les-${key}`;
     const holidayName = Date.parse(s) >= Date.parse(now) ? holiday(start) : undefined;
     const lesson: LessonSlot = {
       id,
@@ -171,6 +175,8 @@ export function registerEnrollment(
 ): { state: LessonState; enrollment: Enrollment; created: number; conflicts: GenerationConflict[] } {
   requireInstructor(actor);
   validate(input);
+  if (endOfDateMs(input.startDate) < Date.parse(ctx.now()))
+    throw new LessonError("INVALID_RANGE", "시작일은 오늘 이후여야 합니다.");
   if (
     state.enrollments.some(
       (e) =>
@@ -226,60 +232,85 @@ export function extendEnrollment(
   return generate(base, next, toDateKey(from), newEndDate, holiday, ctx.now());
 }
 
-/** boundaryMs 이후에 시작하는, 이 등록의 레슨생 레슨(정규·보강 모두) */
-const lessonsAfter = (state: LessonState, enrollment: Enrollment, boundaryMs: number) =>
-  state.slots.filter(
-    (s) => s.studentId === enrollment.studentId && s.status !== "OPEN" && Date.parse(s.start) > boundaryMs,
+/**
+ * 등록을 줄일 때 정리할 대상을 계산한다.
+ * - 이 등록의 정규 레슨(옮겨 온 레슨 포함) 중 경계 이후에 시작하는 것
+ * - 보강 레슨은 같은 레슨생의 다른 등록 기간에 들어가지 않을 때만
+ * - keepSkipped: 고정 시간 변경처럼 등록이 계속될 때는 '보강으로 미룸'·'공휴일 휴강' 기록을 남긴다
+ * 걸려 있던 대기 요청은 취소하고, 강사가 열어 둔 빈 슬롯(보강 신청·변경 희망 대상)은 다시 빈 슬롯으로 돌린다.
+ * 경계는 지금보다 앞설 수 없다 (지난 레슨 기록은 지우지 않는다).
+ */
+function plan(
+  state: LessonState,
+  enrollment: Enrollment,
+  boundaryMs: number,
+  ctx: MachineContext,
+  keepSkipped: boolean,
+) {
+  const boundary = Math.max(boundaryMs, Date.parse(ctx.now()));
+  const others = state.enrollments.filter((e) => e.studentId === enrollment.studentId && e.id !== enrollment.id);
+  const coveredByOther = (iso: string) => {
+    const t = Date.parse(iso);
+    return others.some((e) => new Date(`${e.startDate}T00:00:00`).getTime() <= t && t <= enrollmentEndMs(e));
+  };
+  const affected = state.slots.filter((s) => {
+    if (s.studentId !== enrollment.studentId || s.status === "OPEN" || Date.parse(s.start) <= boundary) return false;
+    if (keepSkipped && s.status === "SKIPPED" && s.skipReason !== "CONFLICT") return false;
+    if (s.enrollmentId === enrollment.id) return true;
+    return !s.enrollmentId && s.lessonType === "MAKEUP" && !coveredByOther(s.start);
+  });
+  const affectedIds = new Set(affected.map((s) => s.id));
+  const touched = state.requests.filter(
+    (r) => r.status === "PENDING" && (affectedIds.has(r.toSlotId) || affectedIds.has(r.fromSlotId ?? "")),
   );
-
-/** 종료 시 삭제될 레슨 수 (확인 화면용) */
-export function countLessonsAfter(state: LessonState, id: string, endDate: string): number {
-  const enrollment = state.enrollments.find((e) => e.id === id);
-  if (!enrollment) return 0;
-  return lessonsAfter(state, enrollment, endOfDateMs(endDate)).filter((s) => s.status !== "SKIPPED").length;
+  // 보강 신청 대상·변경 희망 시간은 강사가 열어 둔 빈 슬롯이었으므로 다시 연다
+  const reopen = new Set(
+    touched.filter((r) => r.kind === "BOOKING" || r.kind === "CHANGE").map((r) => r.toSlotId),
+  );
+  const doomed = new Set([...affectedIds].filter((id) => !reopen.has(id)));
+  return { touched, reopen, doomed, affected };
 }
 
-/**
- * boundaryMs 이후의 레슨을 지운다. 걸려 있던 대기 요청은 취소 처리하고,
- * 경계 이전에 남는 레슨/슬롯은 원래 상태(확정/빈 슬롯)로 되돌린다.
- */
+/** 종료 시 삭제될 레슨 수 (확인 화면용) */
+export function countLessonsAfter(state: LessonState, id: string, endDate: string, now: string): number {
+  const enrollment = state.enrollments.find((e) => e.id === id);
+  if (!enrollment) return 0;
+  const ctx = { now: () => now, id: () => "" };
+  const { doomed } = plan(state, enrollment, endOfDateMs(endDate), ctx, false);
+  return state.slots.filter((s) => doomed.has(s.id) && s.status !== "SKIPPED").length;
+}
+
 function removeAfter(
   state: LessonState,
   enrollment: Enrollment,
   boundaryMs: number,
   ctx: MachineContext,
-  onlyEnrollmentLessons: boolean,
+  keepSkipped: boolean,
 ): { state: LessonState; removed: number } {
-  const doomed = lessonsAfter(state, enrollment, boundaryMs).filter(
-    (s) => !onlyEnrollmentLessons || s.enrollmentId === enrollment.id,
-  );
-  const doomedIds = new Set(doomed.map((s) => s.id));
-  const cancelled = new Map<string, ScheduleRequest>();
-  let slots = state.slots;
-  for (const request of state.requests) {
-    if (request.status !== "PENDING") continue;
-    if (!doomedIds.has(request.toSlotId) && !doomedIds.has(request.fromSlotId ?? "")) continue;
-    cancelled.set(request.id, { ...request, status: "CANCELLED", resolvedAt: ctx.now() });
-    // 경계 이전에 남는 쪽을 되돌린다
-    slots = slots.map((s) => {
-      if (doomedIds.has(s.id) || s.requestId !== request.id) return s;
-      if (request.kind === "CHANGE" && s.id === request.toSlotId) {
-        return { id: s.id, start: s.start, end: s.end, status: "OPEN", threadId: ctx.id("t") };
+  const { touched, reopen, doomed } = plan(state, enrollment, boundaryMs, ctx, keepSkipped);
+  const touchedIds = new Set(touched.map((r) => r.id));
+  const slots = state.slots
+    .filter((s) => !doomed.has(s.id))
+    .map((s): LessonSlot => {
+      if (reopen.has(s.id)) return { id: s.id, start: s.start, end: s.end, status: "OPEN", threadId: ctx.id("t") };
+      // 경계 이전에 남는 쪽(변경 요청의 기존 레슨 등)은 원래 상태로
+      if (s.requestId && touchedIds.has(s.requestId)) {
+        return { ...s, status: s.status === "PENDING_CHANGE" ? "CONFIRMED" : s.status, requestId: undefined };
       }
-      return { ...s, status: "CONFIRMED", requestId: undefined };
+      return s;
     });
-  }
-  // 변경 희망 시간(대상 슬롯)이 경계 이후면 같이 지운다
-  const threads = new Set(doomed.map((s) => s.threadId));
-  const stillUsed = new Set(slots.filter((s) => !doomedIds.has(s.id)).map((s) => s.threadId));
+  const removedThreads = new Set(state.slots.filter((s) => doomed.has(s.id) || reopen.has(s.id)).map((s) => s.threadId));
+  const liveThreads = new Set(slots.map((s) => s.threadId));
   return {
     state: {
       ...state,
-      slots: slots.filter((s) => !doomedIds.has(s.id)),
-      requests: state.requests.map((r) => cancelled.get(r.id) ?? r),
-      comments: state.comments.filter((c) => !threads.has(c.threadId) || stillUsed.has(c.threadId)),
+      slots,
+      requests: state.requests.map((r) =>
+        touchedIds.has(r.id) ? { ...r, status: "CANCELLED" as const, resolvedAt: ctx.now() } : r,
+      ),
+      comments: state.comments.filter((c) => !removedThreads.has(c.threadId) || liveThreads.has(c.threadId)),
     },
-    removed: doomed.filter((s) => s.status !== "SKIPPED").length,
+    removed: state.slots.filter((s) => doomed.has(s.id) && s.status !== "SKIPPED").length,
   };
 }
 
@@ -297,6 +328,8 @@ export function endEnrollment(
     throw new LessonError("INVALID_RANGE", "종료일을 늦추려면 '연장'을 사용해 주세요.");
   if (endDate < current.startDate)
     throw new LessonError("INVALID_RANGE", "종료일이 시작일보다 빠릅니다.");
+  if (endOfDateMs(endDate) < Date.parse(ctx.now()) && endDate < toDateKey(new Date(ctx.now())))
+    throw new LessonError("INVALID_RANGE", "마지막 날은 오늘 이후여야 합니다. 지난 레슨 기록은 지우지 않습니다.");
   const result = removeAfter(state, current, endOfDateMs(endDate), ctx, false);
   return {
     removed: result.removed,
@@ -330,6 +363,7 @@ export function changeEnrollmentSchedule(
   const from = fromDate < current.startDate ? current.startDate : fromDate;
   const boundary = parseDate(from).getTime() - 1;
   const cleared = removeAfter(state, current, boundary, ctx, true).state;
+  // 남겨 둔 기록과 같은 시각의 새 레슨은 만들지 않는다 (generate 에서 id 로 걸러짐)
   const next: Enrollment = { ...current, ...schedule };
   const base = { ...cleared, enrollments: cleared.enrollments.map((e) => (e.id === id ? next : e)) };
   return generate(base, next, from, current.endDate, holiday, ctx.now());
@@ -406,7 +440,7 @@ export function monthProgress(state: LessonState, enrollment: Enrollment, now: s
     return d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth();
   };
   const mine = state.slots.filter(
-    (s) => s.studentId === enrollment.studentId && s.lessonType === "REGULAR" && inMonth(s),
+    (s) => s.enrollmentId === enrollment.id && s.lessonType === "REGULAR" && inMonth(s),
   );
   const targets = new Set(
     state.requests.filter((r) => r.status === "PENDING" && r.kind === "CHANGE").map((r) => r.toSlotId),
@@ -415,6 +449,7 @@ export function monthProgress(state: LessonState, enrollment: Enrollment, now: s
   return {
     total: lessons.length,
     done: lessons.filter((s) => Date.parse(s.end) <= Date.parse(now)).length,
+    /** 진행하지 않은 레슨 (공휴일 휴강 · 보강으로 미룸 · 미배정) */
     skipped: mine.filter((s) => s.status === "SKIPPED").length,
   };
 }
@@ -430,6 +465,7 @@ export function changeImpact(
 ): { fromMonth: number; fromCount: number; toMonth: number; toCount: number } | undefined {
   const a = new Date(fromSlot.start);
   const b = new Date(toStart);
+  if (fromSlot.lessonType !== "REGULAR") return undefined;
   if (a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()) return undefined;
   const targets = new Set(
     state.requests.filter((r) => r.status === "PENDING" && r.kind === "CHANGE").map((r) => r.toSlotId),
@@ -437,7 +473,8 @@ export function changeImpact(
   const count = (ref: Date) =>
     state.slots.filter((s) => {
       if (s.studentId !== fromSlot.studentId || s.id === fromSlot.id) return false;
-      if (s.status === "SKIPPED" || s.status === "PENDING_BOOKING" || targets.has(s.id)) return false;
+      // 달력의 n/total 과 같은 기준: 정규 레슨만
+      if (s.lessonType !== "REGULAR" || s.status === "SKIPPED" || targets.has(s.id)) return false;
       const d = new Date(s.start);
       return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
     }).length;
@@ -447,4 +484,25 @@ export function changeImpact(
     toMonth: b.getMonth() + 1,
     toCount: count(b) + 1,
   };
+}
+
+/** 저장 전에 미리 보는: 기간 안에서 다른 레슨과 겹쳐 '미배정'이 될 레슨 수 */
+export function previewConflicts(
+  state: LessonState,
+  plan: Pick<Enrollment, "times" | "weeks">,
+  fromKey: string,
+  toKey: string,
+  now: string,
+  ignoreEnrollmentId?: string,
+): number {
+  return lessonTimes(plan, fromKey, toKey).filter(({ start, end }) => {
+    if (start.getTime() < Date.parse(now)) return false;
+    return state.slots.some(
+      (x) =>
+        x.status !== "SKIPPED" &&
+        x.status !== "OPEN" &&
+        (!ignoreEnrollmentId || x.enrollmentId !== ignoreEnrollmentId) &&
+        overlaps(x.start, x.end, start.toISOString(), end.toISOString()),
+    );
+  }).length;
 }
