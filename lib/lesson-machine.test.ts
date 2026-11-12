@@ -11,10 +11,12 @@ import {
   LessonError,
   moveOpenSlot,
   planDrop,
+  proposeHoliday,
   rejectRequest,
   requestBooking,
   requestChange,
   requestChangeToNewTime,
+  settle,
   type MachineContext,
 } from "./lesson-machine.ts";
 
@@ -54,6 +56,7 @@ function seed(): LessonState {
         threadId: "t-theirs",
       },
     ],
+    enrollments: [],
     requests: [],
     comments: [],
   };
@@ -305,5 +308,67 @@ describe("지난 시간 차단", () => {
     assert.ok(s.comments.some((c) => c.body.endsWith("레슨생 동의를 기다리는 중입니다.")));
     const s2 = requestChange(seed(), me, "mine", "open2", ctx);
     assert.ok(s2.comments.some((c) => c.body.endsWith("강사 승인을 기다리는 중입니다.")));
+  });
+});
+
+describe("공휴일 레슨 결정 · 만료", () => {
+  const holidaySeed = (): LessonState => {
+    const st = seed();
+    return {
+      ...st,
+      slots: st.slots.map((x) =>
+        x.id === "mine" ? { ...x, holidayName: "신정", holidayDecision: "UNDECIDED" as const } : x,
+      ),
+    };
+  };
+
+  it("한쪽이 제안하고 상대가 동의하면 진행/휴강이 확정된다", () => {
+    const ctx = makeCtx();
+    let s = proposeHoliday(holidaySeed(), teacher, "mine", "SKIP", ctx);
+    assert.equal(getSlotViews(s, me).find((v) => v.slot.id === "mine")!.display, "HOLIDAY_DECISION");
+    throwsCode(() => proposeHoliday(s, me, "mine", "PROCEED", ctx), "INVALID_STATE");
+    throwsCode(() => approveRequest(s, teacher, s.requests[0].id, ctx), "FORBIDDEN");
+    throwsCode(() => approveRequest(s, other, s.requests[0].id, ctx), "FORBIDDEN");
+    s = approveRequest(s, me, s.requests[0].id, ctx);
+    assert.equal(slot(s, "mine").status, "SKIPPED");
+    assert.equal(slot(s, "mine").holidayDecision, "SKIP");
+    // 휴강 기록은 시간을 점유하지 않고, 다른 레슨생에게는 보이지 않는다
+    assert.equal(createOpenSlot(s, teacher, { start: at(7, 10), end: at(7, 11) }, ctx).slot.status, "OPEN");
+    assert.equal(getSlotViews(s, other).some((v) => v.slot.id === "mine"), false);
+
+    let p = proposeHoliday(holidaySeed(), me, "mine", "PROCEED", ctx);
+    p = approveRequest(p, teacher, p.requests[0].id, ctx);
+    assert.equal(slot(p, "mine").status, "CONFIRMED");
+    assert.equal(slot(p, "mine").holidayDecision, "PROCEED");
+  });
+
+  it("거절하면 다시 결정 필요 상태가 되고, 다른 날로 옮기면 기존 시간은 사라진다", () => {
+    const ctx = makeCtx();
+    let s = proposeHoliday(holidaySeed(), me, "mine", "PROCEED", ctx);
+    throwsCode(() => requestChange(s, me, "mine", "open2", ctx), "INVALID_STATE");
+    s = rejectRequest(s, teacher, s.requests[0].id, ctx, "그날은 쉽니다");
+    assert.equal(slot(s, "mine").holidayDecision, "UNDECIDED");
+    assert.equal(slot(s, "mine").requestId, undefined);
+
+    s = requestChange(s, me, "mine", "open2", ctx);
+    s = approveRequest(s, teacher, s.requests.at(-1)!.id, ctx);
+    assert.equal(s.slots.some((x) => x.id === "mine"), false);
+    assert.equal(slot(s, "open2").status, "CONFIRMED");
+    assert.equal(slot(s, "open2").movedFrom, at(7, 10));
+  });
+
+  it("settle: 시간이 지난 요청은 만료되고, 미결정 공휴일 레슨은 휴강 처리된다", () => {
+    const ctx = makeCtx();
+    let s = requestBooking(holidaySeed(), other, "open1", ctx);
+    s = requestChange(s, teacher, "theirs", "open2", ctx);
+    assert.equal(settle(s, ctx), s);
+
+    const later: MachineContext = { now: () => at(7, 12), id: (p) => `late-${p}` };
+    const done = settle(s, later);
+    assert.deepEqual(done.requests.map((r) => r.status), ["EXPIRED", "EXPIRED"]);
+    assert.equal(slot(done, "open1").status, "OPEN");
+    assert.equal(slot(done, "open2").status, "OPEN");
+    assert.equal(slot(done, "theirs").status, "CONFIRMED");
+    assert.equal(slot(done, "mine").status, "SKIPPED");
   });
 });

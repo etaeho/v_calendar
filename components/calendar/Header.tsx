@@ -68,7 +68,7 @@ export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       </div>
 
       <div role="tablist" aria-label="보기 전환" className="flex rounded-lg bg-zinc-100 p-0.5">
-        {VIEWS.map((v) => (
+        {(isInstructor ? [...VIEWS, { id: "students" as const, label: "레슨생 관리" }] : VIEWS).map((v) => (
           <button
             key={v.id}
             role="tab"

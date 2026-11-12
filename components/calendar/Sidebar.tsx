@@ -1,8 +1,25 @@
 "use client";
 
-import { BellRing, Check, Hourglass, Loader2, RefreshCw, RotateCcw, X } from "lucide-react";
+import { BellRing, BookOpen, Check, Hourglass, Loader2, RefreshCw, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { fmtDateTime, fmtTime, SLOT_STYLES, timeAgo } from "@/lib/calendar-items";
+import {
+  fmtDateTime,
+  fmtDay,
+  fmtTime,
+  REQUEST_KIND_CHIP,
+  requestKindLabel,
+  SLOT_STYLES,
+  timeAgo,
+  won,
+} from "@/lib/calendar-items";
+import {
+  activeEnrollments,
+  daysLeft,
+  monthProgress,
+  nextPaymentDate,
+  planLabel,
+  timesLabel,
+} from "@/lib/enrollment";
 import { CALENDARS } from "@/lib/calendars";
 import { canCancel, canResolve } from "@/lib/lesson-machine";
 import { userName } from "@/lib/mock-data";
@@ -13,20 +30,30 @@ import type { ExternalProvider, ScheduleRequest, SlotDisplay, UserRole } from "@
 const LEGEND: { display: SlotDisplay; label: string; hint: string }[] = [
   { display: "OPEN", label: "가능", hint: "신청할 수 있는 빈 시간" },
   { display: "CONFIRMED", label: "확정", hint: "정규 · 보강 레슨" },
-  { display: "PENDING_BOOKING", label: "승인 대기", hint: "보강 신청 응답 전" },
+  { display: "PENDING_BOOKING", label: "승인 대기", hint: "응답·결정이 필요한 일정" },
   { display: "PENDING_CHANGE_FROM", label: "변경 요청", hint: "움직이는 점선" },
+  { display: "SKIPPED", label: "휴강", hint: "쉬기로 한 레슨" },
   { display: "CLOSED", label: "마감", hint: "다른 레슨생 일정" },
 ];
 
 const describe = (r: ScheduleRequest, role: UserRole) => {
   const who = role === "INSTRUCTOR" ? `${userName(r.studentId)} · ` : "";
+  if (r.kind === "HOLIDAY")
+    return `${who}${fmtDateTime(r.toStart)} · ${r.holidayProposal === "SKIP" ? "휴강" : "그대로 진행"} 제안`;
   return r.kind === "BOOKING"
     ? `${who}${fmtDateTime(r.toStart)}`
     : `${who}${fmtDateTime(r.fromStart!)} → ${fmtDateTime(r.toStart)}`;
 };
 
 const describeHistory = (r: ScheduleRequest, role: UserRole) =>
-  `${r.kind === "BOOKING" ? "보강 신청" : "변경"} ${describe(r, role)}`;
+  `${requestKindLabel(r)} ${describe(r, role)}`;
+
+const HISTORY_STATUS: Record<string, { text: string; cls: string }> = {
+  APPROVED: { text: "승인", cls: "text-mint-700" },
+  REJECTED: { text: "반려", cls: "text-red-700" },
+  CANCELLED: { text: "취소", cls: "text-zinc-500" },
+  EXPIRED: { text: "만료", cls: "text-zinc-500" },
+};
 
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const role = useCalendarStore((s) => s.role);
@@ -35,6 +62,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const sync = useCalendarStore((s) => s.sync);
   const requests = useCalendarStore((s) => s.lesson.requests);
   const slots = useCalendarStore((s) => s.lesson.slots);
+  const lesson = useCalendarStore((s) => s.lesson);
   const toggleFilter = useCalendarStore((s) => s.toggleFilter);
   const setAllFilters = useCalendarStore((s) => s.setAllFilters);
   const syncCalendar = useCalendarStore((s) => s.syncCalendar);
@@ -54,6 +82,19 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     .filter((r) => r.status !== "PENDING")
     .sort((a, b) => (b.resolvedAt ?? "").localeCompare(a.resolvedAt ?? ""))
     .slice(0, 5);
+
+  // 아직 아무도 제안하지 않은 공휴일 레슨 (강사는 전체, 레슨생은 본인 것)
+  const undecided = slots
+    .filter(
+      (s) =>
+        s.status === "CONFIRMED" &&
+        s.holidayDecision === "UNDECIDED" &&
+        !s.requestId &&
+        (role === "INSTRUCTOR" || s.studentId === actor.userId),
+    )
+    .sort((a, b) => a.start.localeCompare(b.start));
+  const todoCount = todo.length + undecided.length;
+  const myPlans = role === "STUDENT" ? activeEnrollments(lesson, actor.userId, now) : [];
 
   const goTo = (r: ScheduleRequest) => {
     // 승인된 변경은 새 슬롯, 그 외에는 유지되는 기존 레슨(없으면 대상 슬롯)으로 이동
@@ -137,20 +178,99 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           </ul>
         </section>
 
+        {myPlans.map((plan) => {
+          const left = daysLeft(plan, now);
+          const progress = monthProgress(lesson, plan, now);
+          const due = nextPaymentDate(plan, now);
+          return (
+            <section key={plan.id} aria-label="내 수강 정보" className="rounded-xl border border-zinc-200 p-3 text-xs">
+              <h2 className="mb-1.5 flex items-center gap-1.5 font-semibold text-zinc-500">
+                <BookOpen className="size-3.5" />
+                내 수강
+              </h2>
+              <p className="text-sm font-semibold text-zinc-900">{planLabel(plan)}</p>
+              <p className="text-zinc-700">{timesLabel(plan.times)}</p>
+              <dl className="mt-2 space-y-1 text-zinc-700">
+                <div className="flex justify-between gap-2">
+                  <dt className="text-zinc-500">등록 기간</dt>
+                  <dd className="text-right tabular-nums">
+                    {plan.startDate.slice(5).replace("-", "/")} ~ {plan.endDate.slice(5).replace("-", "/")}
+                    {left <= 14 && (
+                      <span className="ml-1 rounded bg-coral-100 px-1 font-semibold text-coral-800">
+                        종료 D-{left}
+                      </span>
+                    )}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-zinc-500">이번 달</dt>
+                  <dd className="tabular-nums">
+                    {progress.done}/{progress.total}회 진행
+                    {progress.skipped > 0 && ` · 휴강 ${progress.skipped}`}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-zinc-500">일정 변경</dt>
+                  <dd>
+                    {plan.changeDeadlineHours > 0
+                      ? `레슨 ${plan.changeDeadlineHours}시간 전까지`
+                      : "제한 없음"}
+                  </dd>
+                </div>
+                {plan.fee !== undefined && (
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-zinc-500">결제 예정</dt>
+                    <dd className="tabular-nums">
+                      {due ? `${fmtDay(due)} · ` : ""}
+                      {won(plan.fee)}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </section>
+          );
+        })}
+
         <section>
           <h2 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-zinc-500">
             <BellRing className="size-3.5 text-amber-600" />
             내 응답이 필요한 요청
-            {todo.length > 0 && (
+            {todoCount > 0 && (
               <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-amber-950">
-                {todo.length}
+                {todoCount}
               </span>
             )}
           </h2>
-          {todo.length === 0 ? (
+          {todoCount === 0 ? (
             <p className="px-2 text-xs text-zinc-500">처리할 요청이 없습니다.</p>
           ) : (
-            <RequestList items={todo} role={role} now={now} onPick={goTo} tone="todo" />
+            <div className="space-y-1.5">
+              <RequestList items={todo} role={role} now={now} onPick={goTo} tone="todo" />
+              <ul className="space-y-1.5">
+                {undecided.map((slot) => (
+                  <li key={slot.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCursor(new Date(slot.start));
+                        openDrawer({ type: "slot", slotId: slot.id });
+                        onClose();
+                      }}
+                      className="w-full rounded-lg border border-amber-500 bg-amber-50 px-2.5 py-2 text-left text-xs text-amber-950 transition-colors hover:bg-amber-100"
+                    >
+                      <span className="mb-1 flex items-center justify-between gap-2">
+                        <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-semibold", REQUEST_KIND_CHIP.HOLIDAY)}>
+                          공휴일 결정
+                        </span>
+                        <span className="text-[11px] font-semibold text-amber-800">{slot.holidayName}</span>
+                      </span>
+                      {role === "INSTRUCTOR" ? `${userName(slot.studentId)} · ` : ""}
+                      {fmtDateTime(slot.start)} · 진행/휴강을 정해 주세요
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </section>
 
@@ -175,15 +295,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     onClick={() => goTo(r)}
                     className="w-full rounded-lg border border-zinc-200 px-2.5 py-2 text-left text-xs hover:bg-zinc-50"
                   >
-                  <span
-                    className={cn(
-                      "mr-1.5 font-semibold",
-                      r.status === "APPROVED" && "text-mint-700",
-                      r.status === "REJECTED" && "text-red-700",
-                      r.status === "CANCELLED" && "text-zinc-500",
-                    )}
-                  >
-                    {r.status === "APPROVED" ? "승인" : r.status === "REJECTED" ? "반려" : "취소"}
+                  <span className={cn("mr-1.5 font-semibold", HISTORY_STATUS[r.status]?.cls)}>
+                    {HISTORY_STATUS[r.status]?.text}
                   </span>
                   {describeHistory(r, role)}
                   {r.rejectReason && (
@@ -256,10 +369,10 @@ function RequestList({
               <span
                 className={cn(
                   "rounded px-1.5 py-0.5 text-[11px] font-semibold",
-                  r.kind === "BOOKING" ? "bg-amber-200 text-amber-950" : "bg-violet-100 text-violet-900",
+                  REQUEST_KIND_CHIP[r.kind],
                 )}
               >
-                {r.kind === "BOOKING" ? "보강 신청" : "일정 변경"}
+                {requestKindLabel(r)}
               </span>
               <span className={cn("text-[11px]", tone === "todo" ? "font-semibold text-amber-800" : "text-zinc-500")}>
                 {tone === "todo" ? "응답 필요" : "대기 중"} · {timeAgo(r.createdAt, now)}

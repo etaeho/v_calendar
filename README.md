@@ -22,6 +22,14 @@ npm run dev        # http://localhost:3000
 - **레슨생**: "구글/카카오 캘린더 동기화"로 개인 일정(Mock)을 불러와 빈 슬롯과 겹치는지 비교하고, 빈 슬롯에서 보강 신청, 내 레슨에서 일정 변경 요청을 보냅니다. 다른 레슨생의 일정은 "마감됨"으로만 보입니다.
 - 일정을 누르면 우측 Drawer 에 상세·액션·댓글(미니 채팅)이 표시됩니다.
 
+## 수강 등록 (강사 → "레슨생 관리" 탭)
+
+- 레슨생마다 **등록 기간(3·6개월 등), 고정 요일·시간, 주당 횟수, 진행 주차**를 등록하면 기간 전체의 정규 레슨이 자동으로 만들어집니다. 월 4회·8회는 그 요일의 5번째 날을 쉬고, 월 2회는 1·3주 또는 2·4주로 진행합니다.
+- 등록할 때 합의한 **일정 변경 마감**(레슨 n시간 전까지), **월 수강료**, **결제 예정일**을 함께 기록합니다.
+- **연장**하면 같은 시간으로 레슨이 추가되고, **종료**하면 종료일 이후의 레슨이 삭제되며 걸려 있던 요청이 취소됩니다. 고정 시간은 적용 시작일을 정해 바꿀 수 있습니다.
+- 레슨일이 **공휴일**이면 "결정 필요"로 양쪽 달력에 표시됩니다. 한쪽이 진행/휴강을 제안하고 상대가 동의하면 확정되며(다른 날로 옮기기도 가능), 당일까지 정하지 않으면 휴강 처리됩니다.
+- 일정 변경은 과거·등록 종료일 이후로는 할 수 없고, 다른 달이나 공휴일로 옮기면 경고(월별 횟수 변화)를 보여 줍니다. 응답 없이 시간이 지난 요청은 자동 만료됩니다.
+
 ## 일정 상태 머신
 
 ```
@@ -41,11 +49,13 @@ CONFIRMED(기존) + OPEN(대상) ──변경 요청──▶ 둘 다 PENDING_CH
 types/calendar.ts              도메인 타입 (슬롯 상태, 요청, 역할, 캘린더 카테고리)
 lib/lesson-machine.ts          상태 머신 + 역할별 마스킹 (순수 함수, UI 비의존)
 lib/lesson-machine.test.ts     상태 머신 테스트
+lib/enrollment.ts              수강 등록: 레슨 자동 생성, 연장/종료, 공휴일 표시, 월별 횟수 계산 (순수 함수)
+lib/holidays.ts                공휴일 조회 (data/holidays-kr.json, 구글 공개 캘린더에서 갱신)
 lib/services/calendar-sync.ts  CalendarSyncService 인터페이스 + Mock 구현
 lib/mock-data.ts               '이번 주' 기준 상대 날짜로 생성되는 Mock 데이터
 lib/calendar-items.ts          화면 표시용 셀렉터/훅, 배지 스타일
 store/calendar-store.ts        Zustand 스토어 (역할, 필터, 뷰, Drawer, 도메인 상태)
-components/calendar/*          Header, Sidebar, MonthView, WeekView, Drawer
+components/calendar/*          Header, Sidebar, MonthView, WeekView, Drawer, StudentsView(레슨생 관리)
 ```
 
 ## 다음 단계

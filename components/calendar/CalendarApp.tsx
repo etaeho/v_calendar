@@ -6,6 +6,7 @@ import { Header } from "@/components/calendar/Header";
 import { MonthView } from "@/components/calendar/MonthView";
 import { RescheduleBanner } from "@/components/calendar/RescheduleBanner";
 import { Sidebar } from "@/components/calendar/Sidebar";
+import { StudentsView } from "@/components/calendar/StudentsView";
 import { ToastHost } from "@/components/calendar/ToastHost";
 import { WeekView } from "@/components/calendar/WeekView";
 import { useCalendarStore } from "@/store/calendar-store";
@@ -46,7 +47,7 @@ export function CalendarApp() {
         <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
         <main className="flex min-w-0 flex-1 flex-col">
           <RescheduleBanner />
-          {view === "month" ? <MonthView /> : <WeekView />}
+          {view === "students" ? <StudentsView /> : view === "month" ? <MonthView /> : <WeekView />}
         </main>
         {drawerOpen && <Drawer />}
       </div>

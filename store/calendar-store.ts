@@ -11,18 +11,33 @@ import {
   LessonError,
   moveOpenSlot,
   planDrop,
+  proposeHoliday,
   rejectRequest,
   requestBooking,
   requestChange,
   requestChangeToNewTime,
+  settle,
   type MachineContext,
 } from "@/lib/lesson-machine";
+import {
+  changeEnrollmentSchedule,
+  endEnrollment,
+  extendEnrollment,
+  markHolidays,
+  registerEnrollment,
+  updateEnrollmentTerms,
+  type EnrollmentInput,
+  type GenerationConflict,
+  type HolidayLookup,
+} from "@/lib/enrollment";
+import { holidaysOn } from "@/lib/holidays";
 import { createInitialLessonState, INSTRUCTOR, STUDENTS, USERS } from "@/lib/mock-data";
 import { calendarSyncServices } from "@/lib/services/calendar-sync";
 import type {
   Actor,
   CalendarCategory,
   CalendarViewMode,
+  Enrollment,
   ExternalEvent,
   ExternalProvider,
   LessonState,
@@ -102,7 +117,29 @@ interface CalendarStore {
   reject: (requestId: string, reason?: string) => void;
   cancel: (requestId: string) => void;
   comment: (slotId: string, body: string) => void;
+  /** 공휴일 레슨: 그대로 진행 / 휴강 제안 */
+  proposeHoliday: (slotId: string, proposal: "PROCEED" | "SKIP", message?: string) => void;
+
+  /** 수강 등록 관리 (강사). 성공하면 true */
+  registerEnrollment: (input: EnrollmentInput) => boolean;
+  updateEnrollmentTerms: (
+    id: string,
+    terms: Pick<Enrollment, "changeDeadlineHours" | "fee" | "paymentDay">,
+  ) => boolean;
+  changeEnrollmentSchedule: (
+    id: string,
+    schedule: Pick<Enrollment, "times" | "weeks">,
+    fromDate: string,
+  ) => boolean;
+  extendEnrollment: (id: string, newEndDate: string) => boolean;
+  endEnrollment: (id: string, endDate: string) => boolean;
+  /** 마지막 등록/연장에서 다른 일정과 겹쳐 만들지 못한 레슨 */
+  conflicts: GenerationConflict[];
+  clearConflicts: () => void;
 }
+
+/** 쉬는 공휴일이면 그 이름 */
+const holidayLookup: HolidayLookup = (day) => holidaysOn(day).find((h) => h.dayOff)?.name;
 
 let seq = 0;
 const ctx: MachineContext = {
@@ -130,7 +167,7 @@ export function useActor(): Actor {
 
 export const syncKey = (userId: string, provider: ExternalProvider) => `${userId}:${provider}`;
 
-const emptyLesson: LessonState = { slots: [], requests: [], comments: [] };
+const emptyLesson: LessonState = { enrollments: [], slots: [], requests: [], comments: [] };
 
 export const useCalendarStore = create<CalendarStore>((set, get) => {
   const toast = (kind: Toast["kind"], message: string) =>
@@ -153,6 +190,33 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       }
       throw e;
     }
+  };
+
+  /** 레슨이 생성되는 등록 작업: 겹쳐서 못 만든 날이 있으면 따로 보여 준다 */
+  const generateWith = (
+    fn: (
+      state: LessonState,
+      actor: Actor,
+    ) => { state: LessonState; created: number; conflicts: GenerationConflict[] },
+    success: (created: number) => string,
+  ): boolean => {
+    let result: { created: number; conflicts: GenerationConflict[] } | undefined;
+    const ok = transition((state, actor) => {
+      const r = fn(state, actor);
+      result = r;
+      return r.state;
+    });
+    if (ok && result) {
+      set({ conflicts: result.conflicts });
+      toast(
+        result.conflicts.length > 0 ? "info" : "success",
+        success(result.created) +
+          (result.conflicts.length > 0
+            ? ` 다른 일정과 겹친 ${result.conflicts.length}건은 만들지 못했습니다.`
+            : ""),
+      );
+    }
+    return ok;
   };
 
   /** 확정된 레슨을 연결된 외부 캘린더에 Push (Phase 3 에서 실제 API 호출로 대체) */
@@ -189,16 +253,21 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
         initialized: true,
         now: now.toISOString(),
         cursor: now.toISOString(),
-        lesson: createInitialLessonState(now),
+        lesson: settle(createInitialLessonState(now, holidayLookup), ctx),
       });
     },
 
-    tick: () => set({ now: new Date().toISOString() }),
+    tick: () => {
+      const now = new Date().toISOString();
+      // 시간이 지난 요청 만료, 미결정 공휴일 레슨 휴강 처리, 새로 지정된 공휴일 표시
+      set((s) => ({ now, lesson: settle(markHolidays(s.lesson, holidayLookup, now), ctx) }));
+    },
 
     resetDemo: () => {
       const now = new Date();
       set({
-        lesson: createInitialLessonState(now),
+        lesson: settle(createInitialLessonState(now, holidayLookup), ctx),
+        conflicts: [],
         externalEvents: [],
         sync: {},
         drawer: { type: "closed" },
@@ -211,12 +280,14 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       const { drawer } = get();
       // 선택 모드·개인 일정 상세는 역할이 바뀌면 의미가 없으므로 닫는다
       const keep = drawer.type === "slot" || drawer.type === "day";
-      set({ role, toast: null, drawer: keep ? drawer : { type: "closed" } });
+      const view = role === "STUDENT" && get().view === "students" ? "week" : get().view;
+      set({ role, view, toast: null, drawer: keep ? drawer : { type: "closed" } });
     },
     setStudent: (studentId) => {
       const { drawer } = get();
       const keep = drawer.type === "slot" || drawer.type === "day";
-      set({ studentId, role: "STUDENT", toast: null, drawer: keep ? drawer : { type: "closed" } });
+      const view = get().view === "students" ? "week" : get().view;
+      set({ studentId, role: "STUDENT", view, toast: null, drawer: keep ? drawer : { type: "closed" } });
     },
     setView: (view) => set({ view }),
     setCursor: (date) => set({ cursor: date.toISOString() }),
@@ -345,11 +416,15 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       const request = get().lesson.requests.find((r) => r.id === requestId);
       const ok = transition(
         (s, a) => approveRequest(s, a, requestId, ctx),
-        get().role === "STUDENT"
-          ? "동의했습니다. 새 시간으로 레슨이 확정되었습니다."
-          : "승인했습니다. 레슨이 확정되었습니다.",
+        request?.kind === "HOLIDAY"
+          ? request.holidayProposal === "SKIP"
+            ? "동의했습니다. 이 날 레슨은 쉽니다(휴강)."
+            : "동의했습니다. 공휴일이지만 레슨을 진행합니다."
+          : get().role === "STUDENT"
+            ? "동의했습니다. 새 시간으로 레슨이 확정되었습니다."
+            : "승인했습니다. 레슨이 확정되었습니다.",
       );
-      if (ok && request) {
+      if (ok && request && request.kind !== "HOLIDAY") {
         pushConfirmed(request.toSlotId);
         // 변경 승인 시 기존 슬롯은 OPEN 이 되므로, 확정된 새 슬롯을 보여준다
         const { drawer } = get();
@@ -379,6 +454,58 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
 
     comment: (slotId, body) => {
       transition((s, a) => addComment(s, a, slotId, body, ctx));
+    },
+
+    proposeHoliday: (slotId, proposal, message) => {
+      transition(
+        (s, a) => proposeHoliday(s, a, slotId, proposal, ctx, message),
+        proposal === "SKIP"
+          ? "휴강을 제안했습니다. 상대방의 동의를 기다려 주세요."
+          : "그대로 진행을 제안했습니다. 상대방의 동의를 기다려 주세요.",
+      );
+    },
+
+    conflicts: [],
+    clearConflicts: () => set({ conflicts: [] }),
+
+    registerEnrollment: (input) =>
+      generateWith(
+        (s, a) => registerEnrollment(s, a, input, ctx, holidayLookup),
+        (n) => `수강 등록을 저장하고 정규 레슨 ${n}건을 만들었습니다.`,
+      ),
+
+    updateEnrollmentTerms: (id, terms) =>
+      transition((s, a) => updateEnrollmentTerms(s, a, id, terms), "등록 조건을 수정했습니다."),
+
+    changeEnrollmentSchedule: (id, schedule, fromDate) =>
+      generateWith(
+        (s, a) => changeEnrollmentSchedule(s, a, id, schedule, fromDate, ctx, holidayLookup),
+        (n) => `고정 시간을 바꾸고 정규 레슨 ${n}건을 다시 만들었습니다.`,
+      ),
+
+    extendEnrollment: (id, newEndDate) =>
+      generateWith(
+        (s, a) => extendEnrollment(s, a, id, newEndDate, ctx, holidayLookup),
+        (n) => `등록을 연장하고 정규 레슨 ${n}건을 추가했습니다.`,
+      ),
+
+    endEnrollment: (id, endDate) => {
+      let removed = 0;
+      const ok = transition((s, a) => {
+        const r = endEnrollment(s, a, id, endDate, ctx);
+        removed = r.removed;
+        return r.state;
+      });
+      if (ok) {
+        const { drawer, lesson } = get();
+        // 보고 있던 레슨이 삭제됐으면 상세 창을 닫는다
+        const gone =
+          (drawer.type === "slot" && !lesson.slots.some((x) => x.id === drawer.slotId)) ||
+          (drawer.type === "reschedule" && !lesson.slots.some((x) => x.id === drawer.fromSlotId));
+        if (gone) set({ drawer: { type: "closed" } });
+        toast("success", `${endDate}로 등록을 마무리하고 이후 레슨 ${removed}건을 삭제했습니다.`);
+      }
+      return ok;
     },
   };
 

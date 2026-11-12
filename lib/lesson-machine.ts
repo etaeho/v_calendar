@@ -13,6 +13,8 @@
 import type {
   Actor,
   Comment,
+  Enrollment,
+  HolidayDecision,
   LessonSlot,
   LessonState,
   ScheduleRequest,
@@ -49,6 +51,21 @@ export const overlaps = (
 ) => Date.parse(aStart) < Date.parse(bEnd) && Date.parse(bStart) < Date.parse(aEnd);
 
 const isPast = (iso: string, ctx: MachineContext) => Date.parse(iso) < Date.parse(ctx.now());
+
+/** 휴강(SKIPPED) 기록은 시간을 점유하지 않는다 */
+const occupies = (s: LessonSlot) => s.status !== "SKIPPED";
+
+export const enrollmentOf = (state: LessonState, slot: LessonSlot): Enrollment | undefined =>
+  slot.enrollmentId ? state.enrollments.find((e) => e.id === slot.enrollmentId) : undefined;
+
+/** 등록 종료일의 마지막 순간 (현지 시간) */
+export const enrollmentEndMs = (e: Enrollment) => new Date(`${e.endDate}T23:59:59.999`).getTime();
+
+/** 레슨생의 변경 요청 마감(등록 시 합의한 n시간 전)이 지났는가 */
+export function changeDeadlinePassed(state: LessonState, slot: LessonSlot, now: string): boolean {
+  const hours = enrollmentOf(state, slot)?.changeDeadlineHours ?? 0;
+  return hours > 0 && Date.parse(slot.start) - Date.parse(now) < hours * 3_600_000;
+}
 
 const findSlot = (state: LessonState, slotId: string): LessonSlot => {
   const slot = state.slots.find((s) => s.id === slotId);
@@ -110,7 +127,7 @@ export function createOpenSlot(
     throw new LessonError("INVALID_RANGE", "종료 시간이 시작 시간보다 늦어야 합니다.");
   if (isPast(range.start, ctx))
     throw new LessonError("INVALID_RANGE", "지난 시간에는 슬롯을 열 수 없습니다.");
-  if (state.slots.some((s) => overlaps(s.start, s.end, range.start, range.end)))
+  if (state.slots.some((s) => occupies(s) && overlaps(s.start, s.end, range.start, range.end)))
     throw new LessonError("OVERLAP", "이미 등록된 레슨/슬롯과 시간이 겹칩니다.");
 
   const slot: LessonSlot = {
@@ -150,7 +167,11 @@ export function moveOpenSlot(
     throw new LessonError("INVALID_STATE", "빈 슬롯(OPEN)만 직접 옮길 수 있습니다.");
   if (!(Date.parse(range.start) < Date.parse(range.end)))
     throw new LessonError("INVALID_RANGE", "종료 시간이 시작 시간보다 늦어야 합니다.");
-  if (state.slots.some((s) => s.id !== slotId && overlaps(s.start, s.end, range.start, range.end)))
+  if (
+    state.slots.some(
+      (s) => s.id !== slotId && occupies(s) && overlaps(s.start, s.end, range.start, range.end),
+    )
+  )
     throw new LessonError("OVERLAP", "이미 등록된 레슨/슬롯과 시간이 겹칩니다.");
   return {
     ...state,
@@ -196,6 +217,7 @@ export function requestBooking(
     requestId: request.id,
   };
   return {
+    ...state,
     slots: replaceSlots(state, [next]),
     requests: [...state.requests, request],
     comments: [
@@ -221,6 +243,8 @@ export function requestChange(
   const to = findSlot(state, toSlotId);
   if (from.status !== "CONFIRMED" || !from.studentId)
     throw new LessonError("INVALID_STATE", "확정된 레슨만 변경 요청할 수 있습니다.");
+  if (from.requestId)
+    throw new LessonError("INVALID_STATE", "이 레슨에 진행 중인 요청이 있습니다.");
   if (actor.role === "STUDENT" && from.studentId !== actor.userId)
     throw new LessonError("FORBIDDEN", "본인의 레슨만 변경 요청할 수 있습니다.");
   if (to.status !== "OPEN")
@@ -229,6 +253,17 @@ export function requestChange(
     throw new LessonError("INVALID_STATE", "이미 끝난 레슨은 변경할 수 없습니다.");
   if (isPast(to.start, ctx))
     throw new LessonError("INVALID_STATE", "지난 시간으로는 옮길 수 없습니다.");
+  const enrollment = enrollmentOf(state, from);
+  if (enrollment && Date.parse(to.start) > enrollmentEndMs(enrollment))
+    throw new LessonError(
+      "INVALID_STATE",
+      `등록 기간(${enrollment.endDate}까지) 이후로는 옮길 수 없습니다.`,
+    );
+  if (actor.role === "STUDENT" && changeDeadlinePassed(state, from, ctx.now()))
+    throw new LessonError(
+      "INVALID_STATE",
+      `레슨 시작 ${enrollment!.changeDeadlineHours}시간 전까지만 변경을 요청할 수 있습니다.`,
+    );
 
   const request: ScheduleRequest = {
     id: ctx.id("req"),
@@ -245,6 +280,7 @@ export function requestChange(
   };
   const waitingFor = actor.role === "STUDENT" ? "강사 승인을" : "레슨생 동의를";
   return {
+    ...state,
     slots: replaceSlots(state, [
       { ...from, status: "PENDING_CHANGE", requestId: request.id },
       {
@@ -252,6 +288,7 @@ export function requestChange(
         status: "PENDING_CHANGE",
         studentId: from.studentId,
         lessonType: from.lessonType,
+        enrollmentId: from.enrollmentId,
         requestId: request.id,
         // 기존 레슨의 대화 스레드를 공유해 두 슬롯을 하나의 대화로 연결한다
         threadId: from.threadId,
@@ -312,7 +349,7 @@ export function planDrop(
   const end = new Date(Date.parse(start) + duration).toISOString();
   if (Date.parse(start) === Date.parse(slot.start)) return { kind: "none" };
   const invalid = (reason: string): DropPlan => ({ kind: "invalid", reason, start, end });
-  const others = state.slots.filter((s) => s.id !== slotId);
+  const others = state.slots.filter((s) => s.id !== slotId && occupies(s));
 
   if (slot.status === "OPEN") {
     if (actor.role !== "INSTRUCTOR") return invalid("빈 슬롯은 강사만 옮길 수 있습니다.");
@@ -324,6 +361,7 @@ export function planDrop(
 
   const canChange =
     slot.status === "CONFIRMED" &&
+    !slot.requestId &&
     !!slot.studentId &&
     (actor.role === "INSTRUCTOR" || slot.studentId === actor.userId);
   if (canChange && Date.parse(slot.end) <= Date.parse(now))
@@ -333,6 +371,12 @@ export function planDrop(
       slot.status === "CONFIRMED" ? "본인 레슨만 옮길 수 있습니다." : "응답 대기 중인 일정은 옮길 수 없습니다.",
     );
   }
+
+  const enrollment = enrollmentOf(state, slot);
+  if (actor.role === "STUDENT" && changeDeadlinePassed(state, slot, now))
+    return invalid(`레슨 시작 ${enrollment!.changeDeadlineHours}시간 전까지만 변경할 수 있습니다.`);
+  if (enrollment && Date.parse(start) > enrollmentEndMs(enrollment))
+    return invalid(`등록 기간(${enrollment.endDate}까지) 이후로는 옮길 수 없습니다.`);
 
   // 놓은 위치에 빈 슬롯이 있으면 그 슬롯으로 변경 요청 (시작 시간이 같은 슬롯 우선)
   const targets = others
@@ -395,6 +439,10 @@ function revert(
   if (request.kind === "BOOKING") {
     return { slots: replaceSlots(state, [toOpen(ctx, to)]) };
   }
+  if (request.kind === "HOLIDAY") {
+    // 공휴일 제안이 반려/취소되면 다시 '결정 필요' 상태로 남는다
+    return { slots: replaceSlots(state, [{ ...to, requestId: undefined }]), keepThreadId: to.threadId };
+  }
   const from = findSlot(state, request.fromSlotId!);
   return {
     slots: replaceSlots(state, [
@@ -416,18 +464,47 @@ export function approveRequest(
     throw new LessonError("FORBIDDEN", "이 요청을 승인할 권한이 없습니다.");
 
   const to = findSlot(state, request.toSlotId);
+  const who = actor.role === "INSTRUCTOR" ? "강사가" : "레슨생이";
+
+  if (request.kind === "HOLIDAY") {
+    const skip = request.holidayProposal === "SKIP";
+    const decided: LessonSlot = {
+      ...to,
+      status: skip ? "SKIPPED" : "CONFIRMED",
+      holidayDecision: skip ? "SKIP" : "PROCEED",
+      requestId: undefined,
+    };
+    return {
+      ...state,
+      slots: replaceSlots(state, [decided]),
+      requests: replaceRequest(state, { ...request, status: "APPROVED", resolvedAt: ctx.now() }),
+      comments: [
+        ...state.comments,
+        systemComment(
+          ctx,
+          to.threadId,
+          skip
+            ? `공휴일(${to.holidayName ?? "휴일"}) 레슨은 쉬기로 했습니다. (휴강)`
+            : `공휴일(${to.holidayName ?? "휴일"})이지만 레슨을 그대로 진행하기로 했습니다.`,
+        ),
+      ],
+    };
+  }
+
   const confirmed: LessonSlot = { ...to, status: "CONFIRMED", requestId: undefined };
   const changed: LessonSlot[] = [confirmed];
   let removeId: string | undefined;
   if (request.kind === "CHANGE") {
+    const from = findSlot(state, request.fromSlotId!);
     // 대화 스레드는 새 슬롯(confirmed)이 이어받는다.
+    confirmed.movedFrom = from.start;
     // 레슨생이 요청한 변경: 기존 시간은 다시 빈 슬롯(OPEN)으로 연다.
-    // 강사가 제안한 변경: 강사가 그 시간에 안 되는 경우이므로 기존 시간을 열지 않고 지운다.
-    if (request.requestedBy === "STUDENT") changed.push(toOpen(ctx, findSlot(state, request.fromSlotId!)));
-    else removeId = request.fromSlotId;
+    // 강사가 제안한 변경 / 공휴일 레슨을 옮긴 경우: 기존 시간은 열지 않고 지운다.
+    if (request.requestedBy === "STUDENT" && !from.holidayDecision) changed.push(toOpen(ctx, from));
+    else removeId = from.id;
   }
-  const who = actor.role === "INSTRUCTOR" ? "강사가" : "레슨생이";
   return {
+    ...state,
     slots: replaceSlots(state, changed).filter((s) => s.id !== removeId),
     requests: replaceRequest(state, {
       ...request,
@@ -463,7 +540,12 @@ export function rejectRequest(
   const trimmed = reason?.trim() || undefined;
   const { slots, keepThreadId } = revert(state, request, ctx);
   const who = actor.role === "INSTRUCTOR" ? "강사가" : "레슨생이";
+  const what =
+    request.kind === "HOLIDAY"
+      ? "공휴일 레슨 제안을 거절했습니다. 다시 정해 주세요."
+      : "일정 변경 요청을 거절했습니다. 기존 일정이 유지됩니다.";
   return {
+    ...state,
     slots,
     requests: replaceRequest(state, {
       ...request,
@@ -479,7 +561,7 @@ export function rejectRequest(
           systemComment(
             ctx,
             keepThreadId,
-            `${who} 일정 변경 요청을 거절했습니다. 기존 일정이 유지됩니다.${trimmed ? ` (사유: ${trimmed})` : ""}`,
+            `${who} ${what}${trimmed ? ` (사유: ${trimmed})` : ""}`,
           ),
         ]
       : state.comments,
@@ -498,6 +580,7 @@ export function cancelRequest(
 
   const { slots, keepThreadId } = revert(state, request, ctx);
   return {
+    ...state,
     slots,
     requests: replaceRequest(state, {
       ...request,
@@ -507,10 +590,123 @@ export function cancelRequest(
     comments: keepThreadId
       ? [
           ...state.comments,
-          systemComment(ctx, keepThreadId, "일정 변경 요청이 취소되었습니다. 기존 일정이 유지됩니다."),
+          systemComment(
+            ctx,
+            keepThreadId,
+            request.kind === "HOLIDAY"
+              ? "공휴일 레슨 제안이 취소되었습니다."
+              : "일정 변경 요청이 취소되었습니다. 기존 일정이 유지됩니다.",
+          ),
         ]
       : state.comments,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* 공휴일 레슨 결정                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 공휴일에 잡힌 레슨을 '그대로 진행' 또는 '휴강'하자고 제안한다. 상대방이 동의하면 확정된다.
+ * (다른 날로 옮기는 것은 일반 일정 변경 요청을 쓴다)
+ */
+export function proposeHoliday(
+  state: LessonState,
+  actor: Actor,
+  slotId: string,
+  proposal: Exclude<HolidayDecision, "UNDECIDED">,
+  ctx: MachineContext,
+  message?: string,
+): LessonState {
+  const slot = findSlot(state, slotId);
+  if (slot.status !== "CONFIRMED" || slot.holidayDecision !== "UNDECIDED" || !slot.studentId)
+    throw new LessonError("INVALID_STATE", "결정이 필요한 공휴일 레슨이 아닙니다.");
+  if (slot.requestId) throw new LessonError("INVALID_STATE", "이미 진행 중인 제안이 있습니다.");
+  if (actor.role === "STUDENT" && slot.studentId !== actor.userId)
+    throw new LessonError("FORBIDDEN", "본인의 레슨만 제안할 수 있습니다.");
+  if (isPast(slot.start, ctx)) throw new LessonError("INVALID_STATE", "이미 지난 레슨입니다.");
+
+  const request: ScheduleRequest = {
+    id: ctx.id("req"),
+    kind: "HOLIDAY",
+    status: "PENDING",
+    studentId: slot.studentId,
+    requestedBy: actor.role,
+    toSlotId: slot.id,
+    toStart: slot.start,
+    holidayProposal: proposal,
+    message: cleanMessage(message),
+    createdAt: ctx.now(),
+  };
+  return {
+    ...state,
+    slots: replaceSlots(state, [{ ...slot, requestId: request.id }]),
+    requests: [...state.requests, request],
+    comments: [
+      ...state.comments,
+      systemComment(
+        ctx,
+        slot.threadId,
+        `${actor.role === "STUDENT" ? "레슨생이" : "강사가"} 공휴일(${slot.holidayName ?? "휴일"}) 레슨을 ${
+          proposal === "SKIP" ? "쉬자고(휴강)" : "그대로 진행하자고"
+        } 제안했습니다.`,
+      ),
+    ],
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* 시간 경과 처리                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 시간이 지나 의미가 없어진 것들을 정리한다 (앱 시작 시와 주기적으로 호출).
+ * - 응답 없이 해당 시간이 지난 요청 → EXPIRED (기존 레슨 유지, 대상 슬롯은 OPEN)
+ * - 결정 없이 지나간 공휴일 레슨 → 휴강(SKIPPED) 처리
+ * 바뀐 것이 없으면 같은 state 객체를 그대로 돌려준다.
+ */
+export function settle(state: LessonState, ctx: MachineContext): LessonState {
+  const now = Date.parse(ctx.now());
+  let next = state;
+  for (const request of state.requests) {
+    if (request.status !== "PENDING") continue;
+    const times = [request.toSlotId, request.fromSlotId]
+      .map((id) => next.slots.find((s) => s.id === id))
+      .filter((s): s is LessonSlot => !!s)
+      .map((s) => Date.parse(s.start));
+    if (times.length > 0 && Math.min(...times) >= now) continue;
+    const { slots, keepThreadId } = revert(next, request, ctx);
+    next = {
+      ...next,
+      slots,
+      requests: replaceRequest(next, { ...request, status: "EXPIRED", resolvedAt: ctx.now() }),
+      comments: keepThreadId
+        ? [
+            ...next.comments,
+            systemComment(ctx, keepThreadId, "응답 없이 시간이 지나 요청이 만료되었습니다."),
+          ]
+        : next.comments,
+    };
+  }
+  const lapsed = next.slots.filter(
+    (s) => s.status === "CONFIRMED" && s.holidayDecision === "UNDECIDED" && Date.parse(s.start) < now,
+  );
+  if (lapsed.length > 0) {
+    next = {
+      ...next,
+      slots: replaceSlots(
+        next,
+        lapsed.map((s) => ({ ...s, status: "SKIPPED", holidayDecision: "SKIP", requestId: undefined })),
+      ),
+      comments: [
+        ...next.comments,
+        ...lapsed.map((s) =>
+          systemComment(ctx, s.threadId, "결정 없이 공휴일이 지나 휴강으로 처리되었습니다."),
+        ),
+      ],
+    };
+  }
+  return next;
 }
 
 /* ------------------------------------------------------------------ */
@@ -547,10 +743,32 @@ export function addComment(
  */
 export function getSlotViews(state: LessonState, actor: Actor): SlotView[] {
   const requests = new Map(state.requests.map((r) => [r.id, r]));
-  return state.slots.map((slot): SlotView => {
+
+  // 정규 레슨의 월별 회차 (레슨생·달 단위, 휴강과 변경 희망 시간은 제외)
+  const seq = new Map<string, { n: number; total: number }>();
+  const groups = new Map<string, LessonSlot[]>();
+  for (const slot of state.slots) {
+    if (!slot.studentId || slot.lessonType !== "REGULAR" || slot.status === "SKIPPED") continue;
+    if (slot.status === "PENDING_CHANGE" && requests.get(slot.requestId ?? "")?.toSlotId === slot.id)
+      continue;
+    const d = new Date(slot.start);
+    const key = `${slot.studentId}:${d.getFullYear()}-${d.getMonth()}`;
+    const list = groups.get(key);
+    if (list) list.push(slot);
+    else groups.set(key, [slot]);
+  }
+  for (const list of groups.values()) {
+    list.sort((a, b) => a.start.localeCompare(b.start));
+    list.forEach((slot, i) => seq.set(slot.id, { n: i + 1, total: list.length }));
+  }
+
+  const views: SlotView[] = [];
+  for (const slot of state.slots) {
     const mine = actor.role === "STUDENT" && slot.studentId === actor.userId;
     if (actor.role === "STUDENT" && slot.status !== "OPEN" && !mine) {
-      return {
+      // 다른 레슨생의 휴강 기록은 시간이 비어 있으므로 아예 보이지 않는다
+      if (slot.status === "SKIPPED") continue;
+      views.push({
         slot: {
           id: slot.id,
           start: slot.start,
@@ -561,15 +779,19 @@ export function getSlotViews(state: LessonState, actor: Actor): SlotView[] {
         display: "CLOSED",
         masked: true,
         mine: false,
-      };
+      });
+      continue;
     }
     const request = slot.requestId ? requests.get(slot.requestId) : undefined;
     let display: SlotView["display"];
     if (slot.status === "PENDING_CHANGE") {
       display = request?.fromSlotId === slot.id ? "PENDING_CHANGE_FROM" : "PENDING_CHANGE_TO";
+    } else if (slot.status === "CONFIRMED" && slot.holidayDecision === "UNDECIDED") {
+      display = "HOLIDAY_DECISION";
     } else {
       display = slot.status;
     }
-    return { slot, display, masked: false, mine, request };
-  });
+    views.push({ slot, display, masked: false, mine, request, seq: seq.get(slot.id) });
+  }
+  return views;
 }

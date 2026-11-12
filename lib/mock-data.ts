@@ -2,8 +2,16 @@
  * Mock 데이터. 접속한 주(일요일 시작)를 기준으로 상대 날짜로 생성해
  * 언제 열어도 이번 주 ~ 다음 주에 데이터가 보이도록 한다.
  */
-import { addDays, addMinutes, startOfWeek } from "date-fns";
+import { addDays, addMinutes, addMonths, endOfMonth, startOfMonth, startOfWeek } from "date-fns";
+import {
+  registerEnrollment,
+  toDateKey,
+  type EnrollmentInput,
+  type HolidayLookup,
+} from "@/lib/enrollment";
+import { overlaps, type MachineContext } from "@/lib/lesson-machine";
 import type {
+  Actor,
   Comment,
   ExternalEvent,
   ExternalProvider,
@@ -36,193 +44,166 @@ const makeAt = (now: Date) => {
     addMinutes(addDays(base, day), hour * 60 + minute);
 };
 
-export function createInitialLessonState(now: Date): LessonState {
+/** 테스트베드 수강 등록: 접속한 달 기준 상대 기간 */
+function seedEnrollments(now: Date): EnrollmentInput[] {
+  const monthStart = (offset: number) => toDateKey(startOfMonth(addMonths(now, offset)));
+  const monthEnd = (offset: number) => toDateKey(endOfMonth(addMonths(now, offset)));
+  const weekly = [1, 2, 3, 4];
+  const t = (weekday: number, time: string) => ({ weekday, time, durationMin: 60 });
+  return [
+    // 주 1회 · 3개월
+    { studentId: "s1", startDate: monthStart(-1), endDate: monthEnd(1), times: [t(2, "19:00")], weeks: weekly, changeDeadlineHours: 24, fee: 200_000, paymentDay: 25 },
+    // 주 1회 · 6개월
+    { studentId: "s2", startDate: monthStart(-2), endDate: monthEnd(3), times: [t(1, "18:00")], weeks: weekly, changeDeadlineHours: 12, fee: 200_000, paymentDay: 1 },
+    // 주 1회 · 이번 달 말 종료 예정
+    { studentId: "s3", startDate: monthStart(-2), endDate: monthEnd(0), times: [t(3, "17:00")], weeks: weekly, changeDeadlineHours: 24, fee: 220_000, paymentDay: 5 },
+    // 격주(2·4주) 월 2회 · 6개월
+    { studentId: "s4", startDate: monthStart(0), endDate: monthEnd(5), times: [t(5, "16:00")], weeks: [2, 4], changeDeadlineHours: 48, fee: 110_000, paymentDay: 10 },
+    // 주 2회 월 8회 · 3개월, 변경 마감 없음
+    { studentId: "s5", startDate: monthStart(-1), endDate: monthEnd(1), times: [t(2, "17:00"), t(6, "13:00")], weeks: weekly, changeDeadlineHours: 0, fee: 380_000, paymentDay: 15 },
+  ];
+}
+
+export function createInitialLessonState(now: Date, holiday: HolidayLookup): LessonState {
   const at = makeAt(now);
   const iso = (d: Date) => d.toISOString();
-  const slots: LessonSlot[] = [];
-  const add = (
-    id: string,
-    day: number,
-    hour: number,
-    rest: Partial<LessonSlot> = {},
-    minutes = 60,
-  ) => {
-    const start = at(day, hour);
-    slots.push({
-      id,
-      start: iso(start),
-      end: iso(addMinutes(start, minutes)),
-      status: "OPEN",
-      threadId: `t-${id}`,
-      ...rest,
-    });
-  };
-  const lesson = (studentId: string, extra: Partial<LessonSlot> = {}): Partial<LessonSlot> => ({
-    status: "CONFIRMED",
-    studentId,
-    lessonType: "REGULAR",
-    ...extra,
-  });
-
-  // 지난주
-  add("l-s1-prev", -5, 19, lesson("s1"));
-  add("l-s2-prev", -6, 18, lesson("s2"));
-  add("l-s4-prev", -2, 16, lesson("s4"));
-  add("l-s5-prev", -1, 13, lesson("s5"));
-
-  // 이번 주 (0=일 … 6=토)
-  add("l-s2-w1", 1, 18, lesson("s2"));
-  add("l-s1-w1", 2, 19, lesson("s1"));
-  add("l-s3-w1", 3, 17, lesson("s3"));
-  add("o-thu-18", 4, 18);
-  add("o-thu-19", 4, 19);
-  add("l-s4-w1", 5, 16, lesson("s4"));
-  add("o-fri-17", 5, 17);
-  add("p-s3-fri-18", 5, 18, {
-    status: "PENDING_BOOKING",
-    studentId: "s3",
-    lessonType: "MAKEUP",
-    requestId: "req-book-s3",
-  });
-  add("o-sat-10", 6, 10);
-  add("o-sat-11", 6, 11);
-  add("l-s5-w1", 6, 13, lesson("s5"));
-  add("p-s1-sat-14", 6, 14, {
-    status: "PENDING_BOOKING",
-    studentId: "s1",
-    lessonType: "MAKEUP",
-    requestId: "req-book-s1",
-  });
-
-  // 다음 주
-  add("l-s2-w2", 8, 18, lesson("s2", { status: "PENDING_CHANGE", requestId: "req-change-s2" }));
-  add("o-mon-19", 8, 19);
-  add("l-s1-w2", 9, 19, lesson("s1", { status: "PENDING_CHANGE", requestId: "req-change-t1" }));
-  add("l-s3-w2", 10, 17, lesson("s3"));
-  add("c-s1-wed-19", 10, 19, lesson("s1", {
-    status: "PENDING_CHANGE",
-    requestId: "req-change-t1",
-    threadId: "t-l-s1-w2",
-  }));
-  add("p-s5-thu-18-w2", 11, 18, {
-    status: "PENDING_BOOKING",
-    studentId: "s5",
-    lessonType: "MAKEUP",
-    requestId: "req-book-s5",
-  });
-  add("c-s2-thu-19", 11, 19, lesson("s2", {
-    status: "PENDING_CHANGE",
-    requestId: "req-change-s2",
-    threadId: "t-l-s2-w2",
-  }));
-  add("l-s4-w2", 12, 16, lesson("s4"));
-  add("o-fri-19-w2", 12, 19);
-  add("o-sat-10-w2", 13, 10);
-  add("o-sat-11-w2", 13, 11);
-  add("l-s5-w2", 13, 13, lesson("s5"));
-
-  // 그다음 주 정규 레슨
-  add("l-s2-w3", 15, 18, lesson("s2"));
-  add("l-s1-w3", 16, 19, lesson("s1"));
-  add("l-s3-w3", 17, 17, lesson("s3"));
-  add("l-s4-w3", 19, 16, lesson("s4"));
-  add("l-s5-w3", 20, 13, lesson("s5"));
-
-  const start = (id: string) => slots.find((s) => s.id === id)!.start;
-  const ago = (hours: number) => iso(addMinutes(now, -hours * 60));
-
-  const requests: ScheduleRequest[] = [
-    {
-      id: "req-book-s5",
-      kind: "BOOKING",
-      status: "PENDING",
-      studentId: "s5",
-      requestedBy: "STUDENT",
-      toSlotId: "p-s5-thu-18-w2",
-      toStart: start("p-s5-thu-18-w2"),
-      message: "학교 시험 끝나고 보강 받고 싶어요.",
-      createdAt: ago(1),
-    },
-    {
-      id: "req-book-s3",
-      kind: "BOOKING",
-      status: "PENDING",
-      studentId: "s3",
-      requestedBy: "STUDENT",
-      toSlotId: "p-s3-fri-18",
-      toStart: start("p-s3-fri-18"),
-      message: "콩쿠르 전에 한 번 더 봐주실 수 있을까요?",
-      createdAt: ago(20),
-    },
-    {
-      id: "req-book-s1",
-      kind: "BOOKING",
-      status: "PENDING",
-      studentId: "s1",
-      requestedBy: "STUDENT",
-      toSlotId: "p-s1-sat-14",
-      toStart: start("p-s1-sat-14"),
-      message: "지난달 빠진 레슨 보강으로 신청드려요.",
-      createdAt: ago(5),
-    },
-    {
-      id: "req-change-s2",
-      kind: "CHANGE",
-      status: "PENDING",
-      studentId: "s2",
-      requestedBy: "STUDENT",
-      fromSlotId: "l-s2-w2",
-      toSlotId: "c-s2-thu-19",
-      fromStart: start("l-s2-w2"),
-      toStart: start("c-s2-thu-19"),
-      message: "월요일에 학교 행사가 있어서 목요일로 옮기고 싶어요.",
-      createdAt: ago(9),
-    },
-    {
-      id: "req-change-t1",
-      kind: "CHANGE",
-      status: "PENDING",
-      studentId: "s1",
-      requestedBy: "INSTRUCTOR",
-      fromSlotId: "l-s1-w2",
-      toSlotId: "c-s1-wed-19",
-      fromStart: start("l-s1-w2"),
-      toStart: start("c-s1-wed-19"),
-      message: "화요일에 오케스트라 리허설이 잡혀서, 수요일 같은 시간 괜찮을까요?",
-      createdAt: ago(3),
-    },
-  ];
-
+  const nowIso = iso(now);
   let n = 0;
-  const comment = (
-    threadId: string,
+  const ctx: MachineContext = { now: () => nowIso, id: (prefix) => `seed-${prefix}-${++n}` };
+  const instructor: Actor = { userId: INSTRUCTOR.id, role: "INSTRUCTOR" };
+
+  // 1) 수강 등록 → 기간 전체의 정규 레슨 자동 생성
+  let state: LessonState = { enrollments: [], slots: [], requests: [], comments: [] };
+  for (const input of seedEnrollments(now)) {
+    state = registerEnrollment(state, instructor, input, ctx, holiday).state;
+  }
+
+  // 2) 강사가 열어 둔 빈 슬롯 (이번 주 일요일 기준 day 일 뒤). 정규 레슨과 겹치면 건너뛴다
+  const slots: LessonSlot[] = [...state.slots];
+  const open = (id: string, day: number, hour: number) => {
+    const start = at(day, hour);
+    const end = addMinutes(start, 60);
+    if (slots.some((s) => overlaps(s.start, s.end, iso(start), iso(end)))) return;
+    slots.push({ id, start: iso(start), end: iso(end), status: "OPEN", threadId: `t-${id}` });
+  };
+  open("o-thu-18", 4, 18);
+  open("o-thu-19", 4, 19);
+  open("o-fri-17", 5, 17);
+  open("o-fri-18", 5, 18);
+  open("o-sat-10", 6, 10);
+  open("o-sat-11", 6, 11);
+  open("o-sat-14", 6, 14);
+  open("o-mon-19", 8, 19);
+  open("o-wed-19-w2", 10, 19);
+  open("o-thu-18-w2", 11, 18);
+  open("o-thu-19-w2", 11, 19);
+  open("o-fri-19-w2", 12, 19);
+  open("o-sat-10-w2", 13, 10);
+  open("o-sat-11-w2", 13, 11);
+
+  // 3) 진행 중인 요청들 (해당 슬롯이 있고 아직 미래일 때만)
+  const requests: ScheduleRequest[] = [];
+  const comments: Comment[] = [];
+  const ago = (hours: number) => iso(addMinutes(now, -hours * 60));
+  const find = (id: string) => slots.find((s) => s.id === id);
+  const lessonAt = (studentId: string, day: number, hour: number) =>
+    slots.find(
+      (s) => s.studentId === studentId && s.status === "CONFIRMED" && s.start === iso(at(day, hour)),
+    );
+  const future = (s: LessonSlot | undefined): s is LessonSlot => !!s && new Date(s.start) > now;
+  let c = 0;
+  const comment = (threadId: string, hoursAgo: number, body: string, authorId?: string) =>
+    comments.push({
+      id: `seed-c-${++c}`,
+      threadId,
+      kind: authorId ? "USER" : "SYSTEM",
+      authorId,
+      body,
+      createdAt: ago(hoursAgo),
+    });
+
+  const booking = (id: string, slotId: string, studentId: string, hoursAgo: number, message: string) => {
+    const slot = find(slotId);
+    if (!future(slot) || slot.status !== "OPEN") return;
+    Object.assign(slot, { status: "PENDING_BOOKING", studentId, lessonType: "MAKEUP", requestId: id });
+    requests.push({
+      id,
+      kind: "BOOKING",
+      status: "PENDING",
+      studentId,
+      requestedBy: "STUDENT",
+      toSlotId: slot.id,
+      toStart: slot.start,
+      message,
+      createdAt: ago(hoursAgo),
+    });
+    comment(slot.threadId, hoursAgo, "보강 신청이 접수되었습니다. 강사 승인을 기다리는 중입니다.");
+  };
+  booking("req-book-s3", "o-fri-18", "s3", 20, "콩쿠르 전에 한 번 더 봐주실 수 있을까요?");
+  booking("req-book-s1", "o-sat-14", "s1", 5, "지난달 빠진 레슨 보강으로 신청드려요.");
+  booking("req-book-s5", "o-thu-18-w2", "s5", 1, "학교 시험 끝나고 보강 받고 싶어요.");
+
+  const change = (
+    id: string,
+    from: LessonSlot | undefined,
+    toId: string,
+    requestedBy: "STUDENT" | "INSTRUCTOR",
     hoursAgo: number,
-    body: string,
-    authorId?: string,
-  ): Comment => ({
-    id: `seed-c-${++n}`,
-    threadId,
-    kind: authorId ? "USER" : "SYSTEM",
-    authorId,
-    body,
-    createdAt: ago(hoursAgo),
-  });
+    message: string,
+  ) => {
+    const to = find(toId);
+    if (!future(from) || !future(to) || to.status !== "OPEN") return;
+    from.status = "PENDING_CHANGE";
+    from.requestId = id;
+    Object.assign(to, {
+      status: "PENDING_CHANGE",
+      studentId: from.studentId,
+      lessonType: from.lessonType,
+      enrollmentId: from.enrollmentId,
+      requestId: id,
+      threadId: from.threadId,
+    });
+    requests.push({
+      id,
+      kind: "CHANGE",
+      status: "PENDING",
+      studentId: from.studentId!,
+      requestedBy,
+      fromSlotId: from.id,
+      toSlotId: to.id,
+      fromStart: from.start,
+      toStart: to.start,
+      message,
+      createdAt: ago(hoursAgo),
+    });
+    comment(
+      from.threadId,
+      hoursAgo,
+      requestedBy === "STUDENT"
+        ? "레슨생이 일정 변경을 요청했습니다. 강사 승인을 기다리는 중입니다."
+        : "강사가 일정 변경을 요청했습니다. 레슨생 동의를 기다리는 중입니다.",
+    );
+  };
+  const s2Next = lessonAt("s2", 8, 18);
+  const s1Next = lessonAt("s1", 9, 19);
+  change("req-change-s2", s2Next, "o-thu-19-w2", "STUDENT", 9, "월요일에 학교 행사가 있어서 목요일로 옮기고 싶어요.");
+  change("req-change-t1", s1Next, "o-wed-19-w2", "INSTRUCTOR", 3, "화요일에 오케스트라 리허설이 잡혀서, 수요일 같은 시간 괜찮을까요?");
 
-  const comments: Comment[] = [
-    comment("t-l-s1-w1", 30, "선생님, 이번 주는 비브라토 연습해 갈게요!", "s1"),
-    comment("t-l-s1-w1", 29, "좋아요. 스케일 3옥타브도 같이 봐요 🎻", "t1"),
-    comment("t-p-s1-sat-14", 5, "보강 신청이 접수되었습니다. 강사 승인을 기다리는 중입니다."),
-    comment("t-p-s1-sat-14", 4, "보강 때 콩쿠르 곡 1악장 봐주실 수 있나요?", "s1"),
-    comment("t-p-s3-fri-18", 20, "보강 신청이 접수되었습니다. 강사 승인을 기다리는 중입니다."),
-    comment("t-l-s2-w2", 9, "레슨생이 일정 변경을 요청했습니다. 강사 승인을 기다리는 중입니다."),
-    comment("t-l-s2-w2", 8, "목요일 7시면 학원 끝나고 바로 갈 수 있어요.", "s2"),
-    comment("t-l-s1-w2", 3, "강사가 일정 변경을 요청했습니다. 레슨생 동의를 기다리는 중입니다."),
-    comment("t-l-s1-w2", 2, "수요일에 어렵다면 편하게 거절해도 괜찮아요.", "t1"),
-    comment("t-l-s4-w1", 26, "선생님 이번 주 송진 새로 사 갈게요.", "s4"),
-    comment("t-l-s4-w1", 25, "네 좋아요. 활 털도 한번 봐 줄게요.", "t1"),
-  ];
+  // 4) 메시지
+  const chat = (slot: LessonSlot | undefined, hoursAgo: number, body: string, authorId: string) => {
+    if (slot) comment(slot.threadId, hoursAgo, body, authorId);
+  };
+  const s1This = lessonAt("s1", 2, 19);
+  chat(s1This, 30, "선생님, 이번 주는 비브라토 연습해 갈게요!", "s1");
+  chat(s1This, 29, "좋아요. 스케일 3옥타브도 같이 봐요 🎻", "t1");
+  chat(find("o-sat-14"), 4, "보강 때 콩쿠르 곡 1악장 봐주실 수 있나요?", "s1");
+  chat(s2Next, 8, "목요일 7시면 학원 끝나고 바로 갈 수 있어요.", "s2");
+  chat(s1Next, 2, "수요일에 어렵다면 편하게 거절해도 괜찮아요.", "t1");
+  const s4This = lessonAt("s4", 5, 16);
+  chat(s4This, 26, "선생님 이번 주 송진 새로 사 갈게요.", "s4");
+  chat(s4This, 25, "네 좋아요. 활 털도 한번 봐 줄게요.", "t1");
 
-  return { slots, requests, comments };
+  return { enrollments: state.enrollments, slots, requests, comments };
 }
 
 type EventSeed = [day: number, hour: number, minute: number, minutes: number, title: string, location?: string];

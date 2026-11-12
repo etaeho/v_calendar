@@ -132,6 +132,9 @@ export const SLOT_STYLES: Record<SlotDisplay, string> = {
   PENDING_BOOKING: "border-2 border-amber-600 bg-amber-300 text-amber-950 animate-pending",
   PENDING_CHANGE_FROM: "border-marching bg-violet-100 text-violet-950",
   PENDING_CHANGE_TO: "border-marching bg-white text-violet-900",
+  // 공휴일 결정 필요: 승인 대기와 같은 노랑 계열 (태그로 구분)
+  HOLIDAY_DECISION: "border-2 border-amber-600 bg-amber-300 text-amber-950 animate-pending",
+  SKIPPED: "border border-dashed border-zinc-300 bg-zinc-50 text-zinc-500 line-through",
   CLOSED: "border border-zinc-200 bg-closed-stripes text-zinc-500",
 };
 
@@ -144,7 +147,8 @@ export const EXTERNAL_STYLES = {
 export function canDrag(item: CalendarItem, role: UserRole): boolean {
   if (item.kind !== "slot" || item.view.masked) return false;
   if (item.view.display === "OPEN") return role === "INSTRUCTOR";
-  if (item.view.display === "CONFIRMED") return role === "INSTRUCTOR" || item.view.mine;
+  if (item.view.display === "CONFIRMED" || item.view.display === "HOLIDAY_DECISION")
+    return !item.view.slot.requestId && (role === "INSTRUCTOR" || item.view.mine);
   return false;
 }
 
@@ -154,6 +158,8 @@ export const STATUS_LABEL: Record<SlotDisplay, string> = {
   PENDING_BOOKING: "승인 대기",
   PENDING_CHANGE_FROM: "변경 요청 · 기존 시간",
   PENDING_CHANGE_TO: "변경 요청 · 희망 시간",
+  HOLIDAY_DECISION: "공휴일 · 결정 필요",
+  SKIPPED: "휴강",
   CLOSED: "마감",
 };
 
@@ -162,13 +168,20 @@ export function slotTitle(view: SlotView, role: UserRole): string {
   const makeup = view.slot.lessonType === "MAKEUP";
   // 강사가 먼저 제안한 변경은 '요청'이 아니라 '제안'으로 표시한다
   const proposedByInstructor = view.request?.requestedBy === "INSTRUCTOR";
+  // 정규 레슨 회차 (예: 3/4)
+  const seq = view.seq ? ` ${view.seq.n}/${view.seq.total}` : "";
+  const holiday = view.slot.holidayName ?? "공휴일";
   if (role === "INSTRUCTOR") {
     const name = userName(view.slot.studentId);
     switch (view.display) {
       case "OPEN":
         return "빈 슬롯";
       case "CONFIRMED":
-        return `${name} ${makeup ? "보강" : "레슨"}`;
+        return `${name} ${makeup ? "보강" : `레슨${seq}`}`;
+      case "HOLIDAY_DECISION":
+        return `${name} · ${holiday} 결정 필요`;
+      case "SKIPPED":
+        return `${name} 휴강 (${holiday})`;
       case "PENDING_BOOKING":
         return `${name} 보강 신청`;
       case "PENDING_CHANGE_FROM":
@@ -183,7 +196,11 @@ export function slotTitle(view: SlotView, role: UserRole): string {
     case "OPEN":
       return "신청 가능";
     case "CONFIRMED":
-      return makeup ? "내 보강 레슨" : "내 레슨";
+      return makeup ? "내 보강 레슨" : `내 레슨${seq}`;
+    case "HOLIDAY_DECISION":
+      return `${holiday} 레슨 결정 필요`;
+    case "SKIPPED":
+      return `휴강 (${holiday})`;
     case "PENDING_BOOKING":
       return "보강 승인 대기";
     case "PENDING_CHANGE_FROM":
@@ -200,3 +217,15 @@ export const itemTitle = (item: CalendarItem, role: UserRole) =>
 
 export const itemClass = (item: CalendarItem) =>
   item.kind === "external" ? EXTERNAL_STYLES[item.event.provider] : SLOT_STYLES[item.view.display];
+
+/** 요청 종류 이름 */
+export const requestKindLabel = (r: { kind: string }) =>
+  r.kind === "BOOKING" ? "보강 신청" : r.kind === "HOLIDAY" ? "공휴일 결정" : "일정 변경";
+
+export const REQUEST_KIND_CHIP: Record<string, string> = {
+  BOOKING: "bg-amber-200 text-amber-950",
+  CHANGE: "bg-violet-100 text-violet-900",
+  HOLIDAY: "bg-red-100 text-red-800",
+};
+
+export const won = (n: number) => `${n.toLocaleString("ko-KR")}원`;
