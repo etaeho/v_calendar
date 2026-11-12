@@ -33,7 +33,7 @@ export function CalendarApp() {
   }
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-white">
+    <div className="flex h-full flex-col overflow-hidden bg-white">
       <Header onToggleSidebar={() => setSidebarOpen((v) => !v)} />
       <div className="relative flex min-h-0 flex-1">
         <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
