@@ -246,11 +246,12 @@ function ActingUserSelect({ className }: { className?: string }) {
         )}
       >
         <option value={INSTRUCTOR.id} className="bg-white text-zinc-900">
-          강사 · {INSTRUCTOR.name}
+          {INSTRUCTOR.name}
         </option>
         {STUDENTS.map((st, i) => (
           <option key={st.id} value={st.id} className="bg-white text-zinc-900">
-            레슨생 {i + 1} · {st.name}
+            {/* 좁은 화면에서도 이름이 보이도록 이름을 앞에 둔다 */}
+            {st.name} · 레슨생 {i + 1}
           </option>
         ))}
       </select>

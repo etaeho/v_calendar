@@ -60,7 +60,7 @@ export function StudentsView() {
     <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-50 p-4">
       <div className="mx-auto max-w-5xl">
         <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-lg font-bold">레슨생 관리</h2>
+          <h2 className="hidden text-lg font-bold md:block">레슨생 관리</h2>
           <p className="text-sm text-zinc-600">
             레슨생 {STUDENTS.length}명 · 수강 중 {enrolled}명
           </p>
