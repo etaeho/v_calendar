@@ -1,0 +1,58 @@
+# V Calendar — 바이올린 레슨 스케줄러 + 통합 캘린더 (MVP)
+
+타임트리 스타일의 다중 캘린더 UI 위에서 **강사의 레슨 가능 시간 오픈 → 레슨생의 보강 신청 / 일정 변경 요청 → 상호 동의(승인·거절)** 워크플로우를 검증하기 위한 Phase 1 로컬 프로토타입입니다. 서버·DB 없이 브라우저 메모리에서만 동작하며, 새로고침하면 데모 데이터로 초기화됩니다.
+
+## 실행
+
+```bash
+npm install
+npm run dev        # http://localhost:3000
+```
+
+| 명령 | 설명 |
+| --- | --- |
+| `npm test` | 상태 머신 단위 테스트 (Node 내장 test runner, Node 22.18+ 필요) |
+| `npm run lint` / `npm run typecheck` | ESLint / TypeScript 검사 |
+| `npm run build` | 정적 사이트를 `out/` 에 export |
+
+## 사용 방법
+
+- 상단 헤더의 **역할 전환 토글**로 강사(정유진 선생님) ↔ 레슨생(김하은) 화면을 즉시 전환합니다.
+- **강사**: 주간 뷰에서 빈 시간대를 클릭(60분)하거나 드래그해 빈 슬롯을 열고, 사이드바의 "승인할 요청"에서 승인/거절합니다. 확정된 레슨을 열어 직접 변경 요청을 보낼 수도 있습니다(레슨생 동의 필요).
+- **레슨생**: "구글/카카오 캘린더 동기화"로 개인 일정(Mock)을 불러와 빈 슬롯과 겹치는지 비교하고, 빈 슬롯에서 보강 신청, 내 레슨에서 일정 변경 요청을 보냅니다. 다른 레슨생의 일정은 "마감됨"으로만 보입니다.
+- 일정을 누르면 우측 Drawer 에 상세·액션·댓글(미니 채팅)이 표시됩니다.
+
+## 일정 상태 머신
+
+```
+OPEN ──보강 신청(레슨생)──▶ PENDING_BOOKING ──승인(강사)──▶ CONFIRMED
+                                   └──거절 / 취소──▶ OPEN
+
+CONFIRMED(기존) + OPEN(대상) ──변경 요청──▶ 둘 다 PENDING_CHANGE
+     승인(요청의 상대방) ▶ 기존 = OPEN, 대상 = CONFIRMED
+     거절 / 취소         ▶ 기존 = CONFIRMED 유지, 대상 = OPEN (거절 사유는 댓글·요청 내역에 기록)
+```
+
+승인/거절은 요청을 보낸 쪽의 **상대방**만, 취소는 **요청한 본인**만 할 수 있습니다.
+
+## 구조
+
+```
+types/calendar.ts              도메인 타입 (슬롯 상태, 요청, 역할, 캘린더 카테고리)
+lib/lesson-machine.ts          상태 머신 + 역할별 마스킹 (순수 함수, UI 비의존)
+lib/lesson-machine.test.ts     상태 머신 테스트
+lib/services/calendar-sync.ts  CalendarSyncService 인터페이스 + Mock 구현
+lib/mock-data.ts               '이번 주' 기준 상대 날짜로 생성되는 Mock 데이터
+lib/calendar-items.ts          화면 표시용 셀렉터/훅, 배지 스타일
+store/calendar-store.ts        Zustand 스토어 (역할, 필터, 뷰, Drawer, 도메인 상태)
+components/calendar/*          Header, Sidebar, MonthView, WeekView, Drawer
+```
+
+## 다음 단계
+
+- **Phase 2 (DB·인증)**: `lib/lesson-machine.ts` 의 전이 함수를 서버(Supabase RPC 등)로 옮기고, 스토어의 `transition()` 을 API 호출로 교체합니다. 현재 마스킹은 클라이언트에서 수행하므로 실제 서비스에서는 서버(RLS)에서 적용해야 합니다.
+- **Phase 3 (외부 캘린더)**: `CalendarSyncService` 를 구현한 Google/Kakao 서비스를 만들어 `calendarSyncServices` 레지스트리를 교체합니다. 레슨 확정 시 `pushLesson()` 이 이미 호출되도록 연결되어 있습니다(현재 Mock 은 기록만 함).
+
+## 배포 (GitHub Pages)
+
+`.github/workflows/deploy.yml` 이 `main` 브랜치 push 시 lint → test → build 후 `out/` 을 GitHub Pages 에 배포합니다. 저장소 **Settings → Pages → Source** 를 **GitHub Actions** 로 설정해야 합니다. 하위 경로 배포를 위해 빌드 시 `NEXT_PUBLIC_BASE_PATH=/<repo>` 가 주입됩니다.

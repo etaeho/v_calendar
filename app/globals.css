@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+    "Noto Sans KR", "Noto Sans CJK KR", "Malgun Gothic", "Segoe UI", sans-serif;
+
+  --color-mint-50: #effcf8;
+  --color-mint-100: #d5f7ec;
+  --color-mint-200: #aeeedb;
+  --color-mint-300: #77dfc4;
+  --color-mint-400: #3fc9a8;
+  --color-mint-500: #1fb292;
+  --color-mint-600: #129078;
+  --color-mint-700: #117362;
+  --color-mint-800: #125c50;
+
+  --color-coral-50: #fff4f1;
+  --color-coral-100: #ffe6e0;
+  --color-coral-200: #ffd0c6;
+  --color-coral-300: #ffb0a0;
+  --color-coral-400: #ff8873;
+  --color-coral-500: #f9654b;
+  --color-coral-600: #e6482c;
+  --color-coral-700: #c23a21;
+  --color-coral-800: #a03420;
+
+  --animate-slide-in: slide-in 0.2s ease-out;
+  --animate-toast-in: toast-in 0.2s ease-out;
+
+  @keyframes slide-in {
+    from {
+      transform: translateX(24px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+  @keyframes toast-in {
+    from {
+      transform: translateY(8px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: #ffffff;
+  color: #27272a;
+  font-family: var(--font-sans);
+}
+
+/* 마감됨(마스킹) 슬롯의 빗금 패턴 */
+.bg-closed-stripes {
+  background-color: #f4f4f5;
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 6px,
+    rgba(161, 161, 170, 0.22) 6px 8px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
