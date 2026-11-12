@@ -24,6 +24,8 @@ import {
   type MachineContext,
 } from "@/lib/lesson-machine";
 import {
+  approveScheduleRequest,
+  requestScheduleChange,
   changeEnrollmentSchedule,
   endEnrollment,
   extendEnrollment,
@@ -143,6 +145,13 @@ interface CalendarStore {
   /** 공휴일 레슨: 그대로 진행 / 휴강 제안 */
   proposeHoliday: (slotId: string, proposal: "PROCEED" | "SKIP", message?: string) => void;
 
+  /** 고정 시간 변경 요청 (fromDate 레슨부터 일괄 변경, 상대방 동의 필요). 성공하면 true */
+  requestScheduleChange: (
+    enrollmentId: string,
+    schedule: Pick<Enrollment, "times" | "weeks">,
+    fromDate: string,
+    message?: string,
+  ) => boolean;
   /** 수강 등록 관리 (강사). 성공하면 true */
   registerEnrollment: (input: EnrollmentInput) => boolean;
   updateEnrollmentTerms: (
@@ -482,6 +491,22 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
 
     approve: (requestId) => {
       const request = get().lesson.requests.find((r) => r.id === requestId);
+      if (request?.kind === "SCHEDULE") {
+        const verb = get().role === "STUDENT" ? "동의했습니다" : "승인했습니다";
+        const ok = generateWith(
+          (s, a) => approveScheduleRequest(s, a, requestId, ctx, holidayLookup),
+          (n) => `${verb}. 고정 시간이 바뀌어 정규 레슨 ${n}건을 새 시간으로 다시 만들었습니다.`,
+        );
+        if (ok) {
+          // 보고 있던 기준 레슨은 새 시간 레슨으로 바뀌었으므로 새 첫 레슨을 보여 준다
+          const updated = get().lesson.requests.find((r) => r.id === requestId);
+          const { drawer, lesson } = get();
+          if (drawer.type === "slot" && !lesson.slots.some((x) => x.id === drawer.slotId)) {
+            set({ drawer: updated ? { type: "slot", slotId: updated.toSlotId } : { type: "closed" } });
+          }
+        }
+        return;
+      }
       const ok = transition(
         (s, a) => approveRequest(s, a, requestId, ctx),
         request?.kind === "DEFER"
@@ -584,6 +609,14 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       transition(
         (s, a) => adjustMakeup(s, a, studentId, delta, reason, ctx),
         `보강 필요 횟수를 ${delta > 0 ? `${delta}회 늘렸습니다` : `${-delta}회 줄였습니다`}.`,
+      ),
+
+    requestScheduleChange: (enrollmentId, schedule, fromDate, message) =>
+      transition(
+        (s, a) => requestScheduleChange(s, a, enrollmentId, schedule, fromDate, ctx, message),
+        get().role === "STUDENT"
+          ? "고정 시간 변경을 요청했습니다. 강사가 승인하면 적용됩니다."
+          : "고정 시간 변경을 요청했습니다. 레슨생이 동의하면 적용됩니다.",
       ),
 
     registerEnrollment: (input) =>

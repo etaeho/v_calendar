@@ -10,12 +10,21 @@
  */
 import type {
   Actor,
+  Comment,
   Enrollment,
+  ScheduleRequest,
   LessonSlot,
   LessonState,
   WeeklyTime,
 } from "../types/calendar";
-import { enrollmentEndMs, LessonError, overlaps, type MachineContext } from "./lesson-machine.ts";
+import {
+  canResolve,
+  changeDeadlinePassed,
+  enrollmentEndMs,
+  LessonError,
+  overlaps,
+  type MachineContext,
+} from "./lesson-machine.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 export const toDateKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -356,6 +365,18 @@ export function changeEnrollmentSchedule(
   holiday: HolidayLookup,
 ): { state: LessonState; created: number; conflicts: GenerationConflict[] } {
   requireInstructor(actor);
+  return applySchedule(state, id, schedule, fromDate, ctx, holiday);
+}
+
+/** 고정 시간 변경을 실제로 적용한다 (권한 확인 없이: 직접 변경·요청 승인·미리 보기에서 공용) */
+export function applySchedule(
+  state: LessonState,
+  id: string,
+  schedule: Pick<Enrollment, "times" | "weeks">,
+  fromDate: string,
+  ctx: MachineContext,
+  holiday: HolidayLookup,
+): { state: LessonState; created: number; conflicts: GenerationConflict[] } {
   const current = findEnrollment(state, id);
   validate({ ...current, ...schedule });
   if (fromDate > current.endDate)
@@ -369,6 +390,132 @@ export function changeEnrollmentSchedule(
   const next: Enrollment = { ...current, ...schedule };
   const base = { ...cleared, enrollments: cleared.enrollments.map((e) => (e.id === id ? next : e)) };
   return generate(base, next, from, current.endDate, holiday, ctx.now());
+}
+
+/* ------------------------------------------------------------------ */
+/* 고정 시간 변경 요청 (상대방 동의 필요)                                */
+/* ------------------------------------------------------------------ */
+
+/** fromDate 이후 이 등록의 첫 정규 레슨 (요청의 기준 레슨) */
+const firstLessonFrom = (state: LessonState, enrollmentId: string, fromDate: string) =>
+  state.slots
+    .filter(
+      (s) =>
+        s.enrollmentId === enrollmentId &&
+        s.lessonType === "REGULAR" &&
+        s.status !== "SKIPPED" &&
+        Date.parse(s.start) >= parseDate(fromDate).getTime(),
+    )
+    .sort((a, b) => a.start.localeCompare(b.start))[0];
+
+export const pendingScheduleRequest = (state: LessonState, enrollmentId: string) =>
+  state.requests.find(
+    (r) => r.status === "PENDING" && r.kind === "SCHEDULE" && r.schedule?.enrollmentId === enrollmentId,
+  );
+
+/**
+ * 고정 시간 변경을 요청한다 (강사 또는 해당 레슨생).
+ * fromDate 이후의 정규 레슨을 새 고정 시간으로 일괄 변경하며, 상대방이 동의하면 적용된다.
+ */
+export function requestScheduleChange(
+  state: LessonState,
+  actor: Actor,
+  enrollmentId: string,
+  schedule: Pick<Enrollment, "times" | "weeks">,
+  fromDate: string,
+  ctx: MachineContext,
+  message?: string,
+): LessonState {
+  const current = findEnrollment(state, enrollmentId);
+  if (actor.role === "STUDENT" && current.studentId !== actor.userId)
+    throw new LessonError("FORBIDDEN", "본인의 수강 등록만 변경을 요청할 수 있습니다.");
+  validate({ ...current, ...schedule });
+  if (
+    JSON.stringify(schedule.times) === JSON.stringify(current.times) &&
+    schedule.weeks.join() === current.weeks.join()
+  )
+    throw new LessonError("INVALID_RANGE", "지금 고정 시간과 같습니다.");
+  if (fromDate > current.endDate)
+    throw new LessonError("INVALID_RANGE", "적용 시작일이 등록 종료일보다 늦습니다.");
+  if (endOfDateMs(fromDate) < Date.parse(ctx.now()) || fromDate === toDateKey(new Date(ctx.now())))
+    throw new LessonError("INVALID_RANGE", "적용 시작일은 내일 이후여야 합니다.");
+  if (pendingScheduleRequest(state, enrollmentId))
+    throw new LessonError("INVALID_STATE", "이미 진행 중인 고정 시간 변경 요청이 있습니다.");
+  const anchor = firstLessonFrom(state, enrollmentId, fromDate);
+  if (!anchor) throw new LessonError("INVALID_RANGE", "적용 시작일 이후에 바꿀 정규 레슨이 없습니다.");
+  if (actor.role === "STUDENT" && changeDeadlinePassed(state, anchor, ctx.now()))
+    throw new LessonError(
+      "INVALID_STATE",
+      `레슨 시작 ${current.changeDeadlineHours}시간 전까지만 요청할 수 있습니다. 다음 레슨부터로 정해 주세요.`,
+    );
+
+  const request: ScheduleRequest = {
+    id: ctx.id("req"),
+    kind: "SCHEDULE",
+    status: "PENDING",
+    studentId: current.studentId,
+    requestedBy: actor.role,
+    toSlotId: anchor.id,
+    toStart: anchor.start,
+    message: message?.trim() || undefined,
+    schedule: {
+      enrollmentId,
+      fromDate,
+      times: schedule.times,
+      weeks: schedule.weeks,
+      previousTimes: current.times,
+      previousWeeks: current.weeks,
+    },
+    createdAt: ctx.now(),
+  };
+  const note: Comment = {
+    id: ctx.id("c"),
+    threadId: anchor.threadId,
+    kind: "SYSTEM",
+    body: `${actor.role === "STUDENT" ? "레슨생이" : "강사가"} 이 레슨부터 고정 시간을 ${timesLabel(schedule.times)}로 바꾸자고 요청했습니다.`,
+    createdAt: ctx.now(),
+  };
+  return { ...state, requests: [...state.requests, request], comments: [...state.comments, note] };
+}
+
+/** 고정 시간 변경 요청에 동의(승인)한다: 기준 레슨부터 이후의 정규 레슨을 새 시간으로 다시 만든다 */
+export function approveScheduleRequest(
+  state: LessonState,
+  actor: Actor,
+  requestId: string,
+  ctx: MachineContext,
+  holiday: HolidayLookup,
+): { state: LessonState; created: number; conflicts: GenerationConflict[] } {
+  const request = state.requests.find((r) => r.id === requestId);
+  if (!request || request.kind !== "SCHEDULE" || !request.schedule)
+    throw new LessonError("NOT_FOUND", "요청을 찾을 수 없습니다.");
+  if (request.status !== "PENDING") throw new LessonError("INVALID_STATE", "이미 처리된 요청입니다.");
+  if (!canResolve(request, actor))
+    throw new LessonError("FORBIDDEN", "이 요청에 응답할 권한이 없습니다.");
+  const { enrollmentId, times, weeks, fromDate } = request.schedule;
+  const result = applySchedule(state, enrollmentId, { times, weeks }, fromDate, ctx, holiday);
+  const first = firstLessonFrom(result.state, enrollmentId, fromDate);
+  return {
+    ...result,
+    state: {
+      ...result.state,
+      requests: result.state.requests.map((r) =>
+        r.id === requestId ? { ...r, status: "APPROVED" as const, resolvedAt: ctx.now(), toSlotId: first?.id ?? r.toSlotId } : r,
+      ),
+      comments: first
+        ? [
+            ...result.state.comments,
+            {
+              id: ctx.id("c"),
+              threadId: first.threadId,
+              kind: "SYSTEM" as const,
+              body: `${actor.role === "STUDENT" ? "레슨생이" : "강사가"} 동의해 이 레슨부터 고정 시간이 ${timesLabel(times)}로 바뀌었습니다.`,
+              createdAt: ctx.now(),
+            },
+          ]
+        : result.state.comments,
+    },
+  };
 }
 
 /**

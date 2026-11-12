@@ -279,13 +279,16 @@ export const requestKindLabel = (r: { kind: string; requestedBy?: string }) =>
       ? "공휴일 결정"
       : r.kind === "DEFER"
         ? "보강 미루기"
-        : "일정 변경";
+        : r.kind === "SCHEDULE"
+          ? "고정 시간 변경"
+          : "일정 변경";
 
 export const REQUEST_KIND_CHIP: Record<string, string> = {
   BOOKING: "bg-amber-200 text-amber-950",
   CHANGE: "bg-violet-100 text-violet-900",
   HOLIDAY: "bg-red-100 text-red-800",
   DEFER: "bg-orange-100 text-orange-900",
+  SCHEDULE: "bg-sky-100 text-sky-900",
 };
 
 export const won = (n: number) => `${n.toLocaleString("ko-KR")}원`;

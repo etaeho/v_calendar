@@ -580,6 +580,10 @@ function revert(
   request: ScheduleRequest,
   ctx: MachineContext,
 ): { slots: LessonSlot[]; keepThreadId?: string } {
+  if (request.kind === "SCHEDULE") {
+    // 고정 시간 변경 요청은 승인 전까지 레슨을 바꾸지 않으므로 되돌릴 것이 없다
+    return { slots: state.slots, keepThreadId: state.slots.find((s) => s.id === request.toSlotId)?.threadId };
+  }
   const to = findSlot(state, request.toSlotId);
   if (request.kind === "BOOKING") {
     return { slots: replaceSlots(state, [toOpen(ctx, to)]) };
@@ -607,6 +611,8 @@ export function approveRequest(
   const request = findPending(state, requestId);
   if (!canResolve(request, actor))
     throw new LessonError("FORBIDDEN", "이 요청을 승인할 권한이 없습니다.");
+  if (request.kind === "SCHEDULE")
+    throw new LessonError("INVALID_STATE", "고정 시간 변경은 수강 등록 로직(approveScheduleRequest)으로 승인합니다.");
 
   const to = findSlot(state, request.toSlotId);
   const who = actor.role === "INSTRUCTOR" ? "강사가" : "레슨생이";
@@ -711,6 +717,8 @@ export function rejectRequest(
       ? "공휴일 레슨 제안을 거절했습니다. 다시 정해 주세요."
       : request.kind === "DEFER"
         ? "보강으로 미루기를 거절했습니다. 레슨은 그대로 진행합니다."
+        : request.kind === "SCHEDULE"
+          ? "고정 시간 변경을 거절했습니다. 지금 시간이 유지됩니다."
         : "일정 변경 요청을 거절했습니다. 기존 일정이 유지됩니다.";
   return {
     ...state,
@@ -765,6 +773,8 @@ export function cancelRequest(
               ? "공휴일 레슨 제안이 취소되었습니다."
               : request.kind === "DEFER"
                 ? "보강으로 미루기 요청이 취소되었습니다. 레슨은 그대로 진행합니다."
+                : request.kind === "SCHEDULE"
+                  ? "고정 시간 변경 요청이 취소되었습니다."
                 : "일정 변경 요청이 취소되었습니다. 기존 일정이 유지됩니다.",
           ),
         ]

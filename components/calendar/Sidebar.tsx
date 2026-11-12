@@ -52,6 +52,8 @@ const LEGEND: { display: SlotDisplay; label: string; hint: string }[] = [
 const describe = (r: ScheduleRequest, role: UserRole) => {
   const who = role === "INSTRUCTOR" ? `${userName(r.studentId)} · ` : "";
   if (r.kind === "DEFER") return `${who}${fmtDateTime(r.toStart)} 레슨 → 보강으로`;
+  if (r.kind === "SCHEDULE" && r.schedule)
+    return `${who}${timesLabel(r.schedule.previousTimes)} → ${timesLabel(r.schedule.times)} (${fmtDay(new Date(r.toStart))}부터)`;
   if (r.kind === "HOLIDAY")
     return `${who}${fmtDateTime(r.toStart)} · ${r.holidayProposal === "SKIP" ? "휴강" : "그대로 진행"} 제안`;
   return r.kind === "BOOKING"

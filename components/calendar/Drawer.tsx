@@ -42,7 +42,14 @@ import {
   useSlotViews,
 } from "@/lib/calendar-items";
 import { calendarLabel } from "@/lib/calendars";
-import { changeImpact, planLabel } from "@/lib/enrollment";
+import {
+  applySchedule,
+  changeImpact,
+  pendingScheduleRequest,
+  planLabel,
+  timesLabel,
+  toDateKey,
+} from "@/lib/enrollment";
 import { holidaysOn, mainHoliday } from "@/lib/holidays";
 import {
   canCancel,
@@ -64,8 +71,10 @@ import { cn } from "@/lib/utils";
 import { useActor, useCalendarStore } from "@/store/calendar-store";
 import type {
   Comment,
+  Enrollment,
   ExternalEvent,
   LessonSlot,
+  LessonState,
   ScheduleRequest,
   SlotView,
 } from "@/types/calendar";
@@ -392,6 +401,12 @@ function SlotPanel({ slotId }: { slotId: string }) {
           ? "등록 기간이 끝난 뒤의 시간입니다. 재등록 후에 신청할 수 있습니다."
           : null;
   const myMakeup = makeupSummary(lesson, actor.userId, now);
+  // 이 레슨의 수강 등록에 걸린 고정 시간 변경 요청 (적용 시작일 이후 레슨에서 보여 준다)
+  const pendingSchedule = enrollment ? pendingScheduleRequest(lesson, enrollment.id) : undefined;
+  const scheduleRequest =
+    pendingSchedule && slot.start >= pendingSchedule.toStart && slot.status !== "SKIPPED"
+      ? pendingSchedule
+      : undefined;
   // 이 슬롯에서 처리가 끝난 요청 (강사는 전부, 레슨생은 자기 요청만 — 재사용된 슬롯의 남의 기록은 숨김)
   const pastRequests = requests
     .filter(
@@ -494,6 +509,7 @@ function SlotPanel({ slotId }: { slotId: string }) {
           </div>
 
           {request && request.status === "PENDING" && <RequestCard view={view} views={views} />}
+          {scheduleRequest && <RequestCard view={view} views={views} request={scheduleRequest} />}
 
           {pastRequests.length > 0 && <PastRequests items={pastRequests} />}
 
@@ -690,6 +706,9 @@ function SlotPanel({ slotId }: { slotId: string }) {
                   : "빈 슬롯을 고르거나 달력에서 레슨을 빈 슬롯 위로 끌어 놓으면, 강사의 승인 후 확정됩니다."}
               </Hint>
               {slot.lessonType === "REGULAR" && <DeferBox slotId={slot.id} />}
+              {slot.lessonType === "REGULAR" && enrollment && !scheduleRequest && (
+                <ScheduleChangeBox slot={slot} enrollment={enrollment} />
+              )}
             </section>
           )}
 
@@ -748,13 +767,23 @@ function TabButton({
 }
 
 /** 진행 중인 요청: 누가 응답해야 하는지, 진행 단계, 요청 메시지, 응답 버튼 */
-function RequestCard({ view, views }: { view: SlotView; views: SlotView[] }) {
+function RequestCard({
+  view,
+  views,
+  request: given,
+}: {
+  view: SlotView;
+  views: SlotView[];
+  /** 슬롯에 직접 걸리지 않는 요청(고정 시간 변경) */
+  request?: ScheduleRequest;
+}) {
   const role = useCalendarStore((s) => s.role);
   const now = useCalendarStore((s) => s.now);
   const store = useCalendarStore.getState;
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
-  const request = view.request!;
+  const request = given ?? view.request!;
+  const lesson = useCalendarStore((s) => s.lesson);
   const actor = useActor();
   const resolvable = canResolve(request, actor);
   const cancellable = canCancel(request, actor);
@@ -821,6 +850,10 @@ function RequestCard({ view, views }: { view: SlotView; views: SlotView[] }) {
             <LinkRow label="희망" view={toView} active={toView === view} />
             <ChangeWarnings from={fromView.slot} toStart={toView.slot.start} />
           </div>
+        )}
+
+        {request.kind === "SCHEDULE" && request.schedule && (
+          <SchedulePreview request={request} lesson={lesson} now={now} />
         )}
 
         {request.kind === "DEFER" && (
@@ -1501,6 +1534,145 @@ function CustomTimePicker({ durationMs }: { durationMs: number }) {
       >
         이 시간으로
       </Button>
+    </div>
+  );
+}
+
+/** 고정 시간 변경 요청 내용과, 동의하면 어떻게 바뀌는지 미리 보기 */
+function SchedulePreview({
+  request,
+  lesson,
+  now,
+}: {
+  request: ScheduleRequest;
+  lesson: LessonState;
+  now: string;
+}) {
+  const sch = request.schedule!;
+  let created = 0;
+  let conflicts = 0;
+  try {
+    const r = applySchedule(
+      lesson,
+      sch.enrollmentId,
+      { times: sch.times, weeks: sch.weeks },
+      sch.fromDate,
+      { now: () => now, id: (p) => `preview-${p}` },
+      () => undefined,
+    );
+    created = r.created;
+    conflicts = r.conflicts.length;
+  } catch {
+    // 등록이 바뀌어 적용할 수 없는 경우: 승인 시 오류 안내
+  }
+  return (
+    <div className="space-y-1 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-zinc-800">
+      <p className="text-[11px] font-semibold text-sky-800">고정 시간 일괄 변경</p>
+      <p>
+        <span className="text-zinc-500 line-through">{timesLabel(sch.previousTimes)}</span>
+        {" → "}
+        <strong>{timesLabel(sch.times)}</strong>
+      </p>
+      <p className="text-xs text-zinc-700">
+        <strong>{fmtDay(new Date(request.toStart))}</strong> 레슨부터 등록 종료일까지 적용 ·
+        동의하면 정규 레슨 {created}건이 새 시간으로 바뀝니다
+        {conflicts > 0 && ` (다른 레슨과 겹치는 ${conflicts}건은 '미배정' · 보강 필요)`}.
+      </p>
+    </div>
+  );
+}
+
+/** 레슨 상세: 이 레슨부터 고정 시간을 바꾸자고 요청 (상대방 동의 후 일괄 변경) */
+function ScheduleChangeBox({ slot, enrollment }: { slot: LessonSlot; enrollment: Enrollment }) {
+  const role = useCalendarStore((s) => s.role);
+  const store = useCalendarStore.getState;
+  const start = new Date(slot.start);
+  const hhmm = `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`;
+  // 이 레슨에 해당하는 고정 시간 (주 2회면 둘 중 하나)
+  const index = Math.max(
+    0,
+    enrollment.times.findIndex((t) => t.weekday === start.getDay() && t.time === hhmm),
+  );
+  const base = enrollment.times[index];
+  const [open, setOpen] = useState(false);
+  const [weekday, setWeekday] = useState(base.weekday);
+  const [time, setTime] = useState(base.time);
+  const [message, setMessage] = useState("");
+  const WEEK = ["일", "월", "화", "수", "목", "금", "토"];
+  if (!open)
+    return (
+      <Button variant="ghost" size="sm" className="w-full text-xs" onClick={() => setOpen(true)}>
+        <ArrowRightLeft />이 레슨부터 고정 시간 변경 (이후 레슨 일괄)
+      </Button>
+    );
+  const times = enrollment.times.map((t, i) => (i === index ? { ...t, weekday, time } : t));
+  const changed = weekday !== base.weekday || time !== base.time;
+  return (
+    <div className="space-y-2 rounded-xl border border-sky-200 bg-sky-50 p-3">
+      <p className="text-xs text-sky-950">
+        <strong>{fmtDay(start)}</strong> 레슨부터 등록 종료일까지의 정규 레슨을 새 시간으로
+        바꿉니다. {role === "INSTRUCTOR" ? "레슨생이 동의하면" : "강사가 승인하면"} 일괄 적용됩니다.
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-xs text-zinc-600" htmlFor="schedule-weekday">
+          요일
+          <select
+            id="schedule-weekday"
+            value={weekday}
+            onChange={(e) => setWeekday(Number(e.target.value))}
+            className="mt-1 block h-9 rounded-lg border border-zinc-300 bg-white px-2 text-sm text-zinc-900"
+          >
+            {WEEK.map((d, i) => (
+              <option key={d} value={i}>
+                {d}요일
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs text-zinc-600" htmlFor="schedule-time">
+          시작
+          <input
+            id="schedule-time"
+            type="time"
+            step={900}
+            value={time}
+            onChange={(e) => setTime(e.target.value)}
+            className="mt-1 block h-9 rounded-lg border border-zinc-300 bg-white px-2 text-sm text-zinc-900"
+          />
+        </label>
+        <span className="pb-2 text-xs text-zinc-500">{base.durationMin}분</span>
+      </div>
+      <input
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        placeholder="사유 (선택)"
+        aria-label="고정 시간 변경 사유"
+        className="h-9 w-full rounded-lg border border-zinc-300 bg-white px-3 text-sm placeholder:text-zinc-400"
+      />
+      <div className="flex gap-2">
+        <Button size="sm" className="flex-1" onClick={() => setOpen(false)}>
+          돌아가기
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          className="flex-1"
+          disabled={!changed || !time}
+          onClick={() => {
+            if (
+              store().requestScheduleChange(
+                enrollment.id,
+                { times, weeks: enrollment.weeks },
+                toDateKey(start),
+                message,
+              )
+            )
+              setOpen(false);
+          }}
+        >
+          변경 요청 보내기
+        </Button>
+      </div>
     </div>
   );
 }

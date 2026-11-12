@@ -12,6 +12,7 @@ import {
   extendEnrollment,
   monthProgress,
   nextPaymentDate,
+  pendingScheduleRequest,
   planLabel,
   registerEnrollment,
   timesLabel,
@@ -222,6 +223,16 @@ function StudentCard({ student }: { student: User }) {
                 </span>
               )}
             </div>
+            {pendingScheduleRequest(lesson, e.id) && (
+              <p className="mt-2 rounded-lg bg-sky-50 px-2.5 py-1.5 text-xs text-sky-900">
+                고정 시간 변경 요청 진행 중:{" "}
+                {timesLabel(pendingScheduleRequest(lesson, e.id)!.schedule!.times)} (
+                {fmtDay(new Date(pendingScheduleRequest(lesson, e.id)!.toStart))}부터) ·{" "}
+                {pendingScheduleRequest(lesson, e.id)!.requestedBy === "INSTRUCTOR"
+                  ? "레슨생 동의 대기"
+                  : "내 승인 필요 (요청 탭)"}
+              </p>
+            )}
             <dl className="mt-2 grid grid-cols-[5.5rem_1fr] gap-x-2 gap-y-1 text-sm">
               <dt className="text-zinc-500">등록 기간</dt>
               <dd className="tabular-nums">
@@ -457,7 +468,7 @@ function PlanForm({
     if (!store().updateEnrollmentTerms(enrollment.id, terms)) return;
     if (
       scheduleChanged &&
-      !store().changeEnrollmentSchedule(enrollment.id, { times, weeks }, applyFrom)
+      !store().requestScheduleChange(enrollment.id, { times, weeks }, applyFrom)
     )
       return;
     onDone();
@@ -653,7 +664,7 @@ function PlanForm({
 
       {scheduleChanged && (
         <label className={labelCls} htmlFor={`apply-${uid}`}>
-          새 고정 시간 적용 시작일
+          새 고정 시간 적용 시작일 (이 날짜의 레슨부터 일괄 변경)
           <input
             id={`apply-${uid}`}
             type="date"
@@ -665,8 +676,8 @@ function PlanForm({
             className={cn(inputCls, "mt-1 block w-44")}
           />
           <span className="mt-1 block font-normal text-amber-800">
-            이 날짜 이후의 정규 레슨을 지우고 새 시간으로 다시 만듭니다. 걸려 있던 변경 요청은
-            취소됩니다.
+            레슨생에게 변경 요청을 보냅니다. 레슨생이 동의하면 이 날짜 이후의 정규 레슨이 새
+            시간으로 일괄 변경되고, 걸려 있던 변경 요청은 취소됩니다.
           </span>
         </label>
       )}
@@ -695,7 +706,7 @@ function PlanForm({
 
       <FormActions onCancel={onDone}>
         <Button type="submit" variant="primary" size="sm" disabled={!valid || !!previewError}>
-          {editing ? "저장" : "등록"}
+          {editing ? (scheduleChanged ? "저장 · 변경 요청 보내기" : "저장") : "등록"}
         </Button>
       </FormActions>
     </form>

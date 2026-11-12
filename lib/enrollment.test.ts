@@ -13,7 +13,9 @@ import {
   monthProgress,
   nextPaymentDate,
   planLabel,
+  approveScheduleRequest,
   registerEnrollment,
+  requestScheduleChange,
   toDateKey,
   type EnrollmentInput,
   type HolidayLookup,
@@ -505,5 +507,60 @@ describe("보강 신청은 등록 기간 안에서만", () => {
     throwsCode(() => requestBooking(st, s2, nov, ctx), "FORBIDDEN");
     throwsCode(() => requestBooking(st, s1, dec, ctx), "INVALID_STATE");
     assert.equal(requestBooking(st, s1, nov, ctx).requests.length, 1);
+  });
+});
+
+describe("고정 시간 변경 요청 (이 레슨부터 일괄 변경)", () => {
+  const thu18 = { weekday: 4, time: "18:00", durationMin: 60 };
+
+  it("강사가 요청하고 레슨생이 동의하면 그 날짜부터 정규 레슨이 새 시간으로 바뀐다", () => {
+    const ctx = makeCtx();
+    const st = registerEnrollment(empty(), teacher, input(), regCtx(), noHoliday).state;
+    const id = st.enrollments[0].id;
+    let p = requestScheduleChange(st, teacher, id, { times: [thu18], weeks: weekly }, "2026-12-01", ctx, "화요일이 어려워요");
+    const req = p.requests.at(-1)!;
+    assert.equal(req.kind, "SCHEDULE");
+    assert.equal(req.toStart, local(2026, 12, 1, 19));
+    // 승인 전에는 레슨이 그대로
+    assert.ok(p.slots.some((s) => s.start === local(2026, 12, 8, 19)));
+    throwsCode(() => approveScheduleRequest(p, teacher, req.id, ctx, noHoliday), "FORBIDDEN");
+    throwsCode(() => approveScheduleRequest(p, s2, req.id, ctx, noHoliday), "FORBIDDEN");
+    throwsCode(() => requestScheduleChange(p, teacher, id, { times: [thu18], weeks: [1, 3] }, "2026-12-01", ctx), "INVALID_STATE");
+    const r = approveScheduleRequest(p, s1, req.id, ctx, noHoliday);
+    p = r.state;
+    assert.equal(r.created, 4);
+    assert.equal(p.requests.at(-1)!.status, "APPROVED");
+    assert.equal(p.enrollments[0].times[0].weekday, 4);
+    const nov = p.slots.filter((s) => new Date(s.start).getMonth() === 10);
+    const dec = p.slots.filter((s) => new Date(s.start).getMonth() === 11);
+    assert.ok(nov.every((s) => new Date(s.start).getDay() === 2));
+    assert.deepEqual(dec.map((s) => toDateKey(new Date(s.start))), ["2026-12-03", "2026-12-10", "2026-12-17", "2026-12-24"]);
+  });
+
+  it("레슨생도 요청할 수 있고(강사 승인), 거절·취소하면 아무것도 바뀌지 않는다", () => {
+    const ctx = makeCtx();
+    const st = registerEnrollment(empty(), teacher, input(), regCtx(), noHoliday).state;
+    const id = st.enrollments[0].id;
+    throwsCode(() => requestScheduleChange(st, s2, id, { times: [thu18], weeks: weekly }, "2026-12-01", ctx), "FORBIDDEN");
+    throwsCode(() => requestScheduleChange(st, s1, id, { times: [tue19], weeks: weekly }, "2026-12-01", ctx), "INVALID_RANGE");
+    throwsCode(() => requestScheduleChange(st, s1, id, { times: [thu18], weeks: weekly }, "2026-11-12", ctx), "INVALID_RANGE");
+    let p = requestScheduleChange(st, s1, id, { times: [thu18], weeks: weekly }, "2026-11-17", ctx);
+    p = rejectRequest(p, teacher, p.requests.at(-1)!.id, ctx, "목요일은 꽉 찼어요");
+    assert.equal(p.requests.at(-1)!.status, "REJECTED");
+    assert.deepEqual(p.slots, st.slots);
+    p = requestScheduleChange(p, s1, id, { times: [thu18], weeks: weekly }, "2026-11-17", ctx);
+    p = cancelRequest(p, s1, p.requests.at(-1)!.id, ctx);
+    assert.equal(p.requests.at(-1)!.status, "CANCELLED");
+    p = requestScheduleChange(p, s1, id, { times: [thu18], weeks: weekly }, "2026-11-17", ctx);
+    const r = approveScheduleRequest(p, teacher, p.requests.at(-1)!.id, ctx, noHoliday);
+    assert.ok(r.state.slots.some((s) => s.start === local(2026, 11, 19, 18)));
+  });
+
+  it("레슨생은 변경 마감이 지난 레슨부터는 요청할 수 없다", () => {
+    const st = registerEnrollment(empty(), teacher, input({ changeDeadlineHours: 48 }), regCtx(), noHoliday).state;
+    const id = st.enrollments[0].id;
+    const late = makeCtx(local(2026, 11, 16, 9)); // 11/17 19:00 레슨 34시간 전
+    throwsCode(() => requestScheduleChange(st, s1, id, { times: [thu18], weeks: weekly }, "2026-11-17", late), "INVALID_STATE");
+    assert.equal(requestScheduleChange(st, teacher, id, { times: [thu18], weeks: weekly }, "2026-11-17", late).requests.length, 1);
   });
 });

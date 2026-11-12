@@ -85,7 +85,8 @@ export interface LessonSlot {
 }
 
 /** DEFER: 레슨을 취소하고 '보강 필요'로 미루기 (새 날짜는 나중에 보강 신청으로 정함) */
-export type RequestKind = "BOOKING" | "CHANGE" | "HOLIDAY" | "DEFER";
+/** SCHEDULE: 고정 시간 변경 — 특정 레슨부터 이후의 정규 레슨을 새 요일·시각으로 일괄 변경 (상대방 동의 필요) */
+export type RequestKind = "BOOKING" | "CHANGE" | "HOLIDAY" | "DEFER" | "SCHEDULE";
 /** EXPIRED: 응답 없이 해당 시간이 지나 자동 종료된 요청 */
 export type RequestStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "EXPIRED";
 
@@ -104,6 +105,15 @@ export interface ScheduleRequest {
   /** 요청 시점의 시간 스냅샷 (슬롯이 삭제/변경되어도 내역 표시에 사용) */
   fromStart?: string;
   toStart: string;
+  /** SCHEDULE 요청: 어느 등록을, 언제부터, 어떤 고정 시간으로 바꾸는지 (이전 값은 표시용) */
+  schedule?: {
+    enrollmentId: string;
+    fromDate: string;
+    times: WeeklyTime[];
+    weeks: number[];
+    previousTimes: WeeklyTime[];
+    previousWeeks: number[];
+  };
   /** HOLIDAY 요청의 제안 내용 (그대로 진행 / 휴강) */
   holidayProposal?: Exclude<HolidayDecision, "UNDECIDED">;
   /** 요청과 함께 보낸 메시지 (요청 카드에 표시, 메신저와 분리) */
