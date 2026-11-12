@@ -17,6 +17,7 @@ import {
   proposeHoliday,
   rejectRequest,
   requestBooking,
+  restoreMissed,
   requestChange,
   requestChangeToNewTime,
   settle,
@@ -129,6 +130,12 @@ interface CalendarStore {
   setFocusStudent: (studentId: string | null) => void;
   /** 정규 레슨을 보강으로 미루기 요청 */
   proposeDefer: (slotId: string, message?: string) => void;
+  /** 화면에서 바로 알림(토스트)을 띄운다 */
+  notify: (kind: Toast["kind"], message: string) => void;
+  /** 강사: 미배정 레슨을 원래 시간으로 다시 잡기 */
+  restoreMissed: (slotId: string) => void;
+  /** 일정 변경: 빈 슬롯이 아닌 시간을 직접 지정 (강사) */
+  setRescheduleRange: (range: { start: string; end: string }) => void;
   /** 강사: 레슨생에게 보강 시간 제안 (레슨생 동의 필요) */
   proposeMakeup: (slotId: string, studentId: string, message?: string) => boolean;
   /** 강사: 보강 필요 횟수 조정 */
@@ -540,6 +547,33 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       );
     },
 
+    notify: (kind, message) => toast(kind, message),
+
+    restoreMissed: (slotId) => {
+      transition((s, a) => restoreMissed(s, a, slotId, ctx), "원래 시간으로 레슨을 다시 잡았습니다.");
+    },
+
+    setRescheduleRange: (range) => {
+      const { drawer, lesson, now } = get();
+      if (drawer.type !== "reschedule") return;
+      const plan = planDrop(lesson, actorFromState(get()), drawer.fromSlotId, range.start, now);
+      if (plan.kind === "invalid") {
+        toast("error", plan.reason);
+        return;
+      }
+      if (plan.kind === "change") {
+        set({ drawer: { type: "reschedule", fromSlotId: drawer.fromSlotId, toSlotId: plan.toSlotId } });
+      } else if (plan.kind === "change-new") {
+        set({
+          drawer: {
+            type: "reschedule",
+            fromSlotId: drawer.fromSlotId,
+            toRange: { start: plan.start, end: plan.end },
+          },
+        });
+      }
+    },
+
     proposeMakeup: (slotId, studentId, message) =>
       transition(
         (s, a) => proposeMakeup(s, a, slotId, studentId, ctx, message),
@@ -587,7 +621,13 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
           (drawer.type === "slot" && !lesson.slots.some((x) => x.id === drawer.slotId)) ||
           (drawer.type === "reschedule" && !lesson.slots.some((x) => x.id === drawer.fromSlotId));
         if (gone) set({ drawer: { type: "closed" } });
-        toast("success", `${endDate}로 등록을 마무리하고 이후 레슨 ${removed}건을 삭제했습니다.`);
+        const [, m, d] = endDate.split("-").map(Number);
+        toast(
+          "success",
+          removed > 0
+            ? `${m}월 ${d}일까지로 등록을 마무리했습니다. 이후 레슨 ${removed}건을 삭제했습니다.`
+            : `${m}월 ${d}일까지로 등록을 마무리했습니다.`,
+        );
       }
       return ok;
     },

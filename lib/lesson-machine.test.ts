@@ -56,7 +56,16 @@ function seed(): LessonState {
         threadId: "t-theirs",
       },
     ],
-    enrollments: [],
+    // 보강 신청은 등록 기간 안에서만 가능하므로 레슨생 두 명을 1월 한 달 등록해 둔다
+    enrollments: ["s1", "s2"].map((studentId) => ({
+      id: `e-${studentId}`,
+      studentId,
+      startDate: "2026-01-01",
+      endDate: "2026-01-31",
+      times: [],
+      weeks: [1, 2, 3, 4],
+      changeDeadlineHours: 0,
+    })),
     makeupAdjustments: [],
     requests: [],
     comments: [],

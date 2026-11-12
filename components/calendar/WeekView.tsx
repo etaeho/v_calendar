@@ -132,6 +132,7 @@ export function WeekView() {
   const openDrawer = useCalendarStore((s) => s.openDrawer);
   const createSlot = useCalendarStore((s) => s.createSlot);
   const dropSlot = useCalendarStore((s) => s.dropSlot);
+  const notify = useCalendarStore((s) => s.notify);
   const actor = useActor();
   const items = useCalendarItems();
   const linked = useLinkedSlotIds();
@@ -151,7 +152,10 @@ export function WeekView() {
 
   const mobile = useIsMobile();
   const todayIndex = new Date(now).getDay();
-  const showsToday = isSameDay(startOfWeek(new Date(cursor), { weekStartsOn: 0 }), startOfWeek(new Date(now), { weekStartsOn: 0 }));
+  const showsToday = isSameDay(
+    startOfWeek(new Date(cursor), { weekStartsOn: 0 }),
+    startOfWeek(new Date(now), { weekStartsOn: 0 }),
+  );
   useEffect(() => {
     // 좁은 화면(가로 스크롤)에서는 오늘 열이 보이도록 가로 위치를 맞춘다
     const el = scrollRef.current;
@@ -165,7 +169,9 @@ export function WeekView() {
   const days = mobile
     ? Array.from({ length: 3 }, (_, i) => addDays(startOfDay(new Date(cursor)), i))
     : Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-  const gridCols = { gridTemplateColumns: `${mobile ? "2.75rem" : "3.5rem"} repeat(${days.length}, minmax(0, 1fr))` };
+  const gridCols = {
+    gridTemplateColumns: `${mobile ? "2.75rem" : "3.5rem"} repeat(${days.length}, minmax(0, 1fr))`,
+  };
   // PC: 마우스를 올린 시간대에 '여기서부터 슬롯' 미리 보기
   const [hover, setHover] = useState<{ dayIndex: number; min: number } | null>(null);
   const lastPointer = useRef<string>("mouse");
@@ -220,9 +226,16 @@ export function WeekView() {
   const onColumnClick = (dayIndex: number) => (e: React.MouseEvent<HTMLDivElement>) => {
     if (lastPointer.current !== "touch" || e.target !== e.currentTarget) return;
     const y = e.clientY - e.currentTarget.getBoundingClientRect().top;
-    const min = Math.min(Math.max(Math.floor(((y / HOUR_PX) * 60) / SNAP_MIN) * SNAP_MIN, 0), TOTAL_MIN - 60);
+    const min = Math.min(
+      Math.max(Math.floor(((y / HOUR_PX) * 60) / SNAP_MIN) * SNAP_MIN, 0),
+      TOTAL_MIN - 60,
+    );
     const total = HOUR_START * 60 + min;
     const time = `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+    if (role === "INSTRUCTOR" && addMinutes(dayBase(dayIndex), min) < new Date(now)) {
+      notify("error", "지난 시간에는 슬롯을 열 수 없습니다.");
+      return;
+    }
     openDrawer({
       type: "day",
       date: days[dayIndex].toISOString(),
@@ -303,262 +316,279 @@ export function WeekView() {
     ? addMinutes(dayBase(move.dayIndex), move.startMin).toISOString()
     : null;
   const plan: DropPlan | null =
-    move && moveStartIso
-      ? planDrop(lesson, actor, move.slotId, moveStartIso, now)
-      : null;
+    move && moveStartIso ? planDrop(lesson, actor, move.slotId, moveStartIso, now) : null;
 
   const pendingRange = drawer.type === "reschedule" ? drawer.toRange : undefined;
 
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
-      <div className={mobile ? undefined : "min-w-[720px]"}>
-        <div className="sticky top-0 z-30 grid border-b border-zinc-300 bg-white" style={gridCols}>
-          <div className="sticky left-0 z-10 bg-white" />
-          {days.map((day) => {
-            const i = day.getDay();
-            const isToday = isSameDay(day, today);
-            const holiday = mainHoliday(day);
-            const red = i === 0 || holiday?.dayOff;
-            return (
-              <button
-                key={day.toISOString()}
-                type="button"
-                onClick={() => openDrawer({ type: "day", date: day.toISOString() })}
-                className="flex min-w-0 flex-col items-center gap-0.5 border-l border-zinc-200 px-1 pt-1.5 pb-1 hover:bg-zinc-50"
-              >
-                <span
-                  className={cn(
-                    "text-xs font-medium",
-                    red ? "text-red-600" : i === 6 ? "text-blue-600" : "text-zinc-600",
-                  )}
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
+        <div className={mobile ? undefined : "min-w-[720px]"}>
+          <div
+            className="sticky top-0 z-30 grid border-b border-zinc-300 bg-white"
+            style={gridCols}
+          >
+            <div className="sticky left-0 z-10 bg-white" />
+            {days.map((day) => {
+              const i = day.getDay();
+              const isToday = isSameDay(day, today);
+              const holiday = mainHoliday(day);
+              const red = i === 0 || holiday?.dayOff;
+              return (
+                <button
+                  key={day.toISOString()}
+                  type="button"
+                  onClick={() => openDrawer({ type: "day", date: day.toISOString() })}
+                  className="flex min-w-0 flex-col items-center gap-0.5 border-l border-zinc-200 px-1 pt-1.5 pb-1 hover:bg-zinc-50"
                 >
-                  {WEEKDAYS[i]}
-                </span>
-                <span
-                  className={cn(
-                    "flex size-7 items-center justify-center rounded-full text-sm tabular-nums",
-                    isToday
-                      ? "bg-mint-600 font-bold text-white"
-                      : red
-                        ? "font-semibold text-red-600"
-                        : "text-zinc-900",
-                  )}
-                >
-                  {day.getDate()}
-                </span>
-                <span
-                  title={holiday?.name}
-                  className={cn(
-                    "h-4 max-w-full truncate text-[11px] leading-4",
-                    holiday?.dayOff ? "font-medium text-red-600" : "text-zinc-500",
-                  )}
-                >
-                  {holiday?.name}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="grid" style={gridCols}>
-          <div className="sticky left-0 z-20 bg-white" style={{ height: minToPx(TOTAL_MIN) }}>
-            {HOURS.map((h, i) => (
-              <span
-                key={h}
-                className="absolute right-2 -translate-y-1/2 text-[11px] text-zinc-500 tabular-nums"
-                style={{ top: i * HOUR_PX }}
-              >
-                {i === 0 ? "" : `${String(h).padStart(2, "0")}:00`}
-              </span>
-            ))}
+                  <span
+                    className={cn(
+                      "text-xs font-medium",
+                      red ? "text-red-600" : i === 6 ? "text-blue-600" : "text-zinc-600",
+                    )}
+                  >
+                    {WEEKDAYS[i]}
+                  </span>
+                  <span
+                    className={cn(
+                      "flex size-7 items-center justify-center rounded-full text-sm tabular-nums",
+                      isToday
+                        ? "bg-mint-600 font-bold text-white"
+                        : red
+                          ? "font-semibold text-red-600"
+                          : "text-zinc-900",
+                    )}
+                  >
+                    {day.getDate()}
+                  </span>
+                  <span
+                    title={holiday?.name}
+                    className={cn(
+                      "h-4 max-w-full truncate text-[11px] leading-4",
+                      holiday?.dayOff ? "font-medium text-red-600" : "text-zinc-500",
+                    )}
+                  >
+                    {holiday?.name}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
-          {days.map((day, dayIndex) => {
-            const placed = layoutDay(itemsOnDay(items, day));
-            const isToday = isSameDay(day, today);
-            const createPreview = create?.dayIndex === dayIndex ? createRange(create) : null;
-            const ghost =
-              plan && plan.kind !== "none" && isSameDay(new Date(plan.start), day) ? plan : null;
-            const pendingHere =
-              pendingRange && isSameDay(new Date(pendingRange.start), day) ? pendingRange : null;
-            return (
-              <div
-                key={day.toISOString()}
-                ref={(el) => {
-                  columnsRef.current[dayIndex] = el;
-                }}
-                onPointerDown={onColumnPointerDown(dayIndex)}
-                onPointerMove={onColumnPointerMove(dayIndex)}
-                onPointerLeave={() => setHover(null)}
-                onClick={onColumnClick(dayIndex)}
-                onPointerUp={onColumnPointerUp}
-                onPointerCancel={() => setCreate(null)}
-                className={cn(
-                  "relative border-l border-zinc-200 select-none",
-                  isToday && "bg-mint-50/40",
-                  canCreate && "cursor-cell",
-                )}
-                style={{ height: minToPx(TOTAL_MIN) }}
-              >
-                {/* 1시간 실선 · 30분 점선 · 15분 얇은 점선 */}
-                {HOURS.map((h, i) => (
-                  <div key={h} className="pointer-events-none absolute inset-x-0" style={{ top: i * HOUR_PX }}>
-                    {i > 0 && <div className="border-t border-zinc-300" />}
-                    {[1, 3].map((q) => (
-                      <div
-                        key={q}
-                        className="absolute inset-x-0 border-t-[0.5px] border-dotted border-zinc-200"
-                        style={{ top: (HOUR_PX / 4) * q }}
-                      />
-                    ))}
-                    <div
-                      className="absolute inset-x-0 border-t border-dashed border-zinc-300/80"
-                      style={{ top: HOUR_PX / 2 }}
-                    />
-                  </div>
-                ))}
+          <div className="grid" style={gridCols}>
+            <div className="sticky left-0 z-20 bg-white" style={{ height: minToPx(TOTAL_MIN) }}>
+              {HOURS.map((h, i) => (
+                <span
+                  key={h}
+                  className="absolute right-2 -translate-y-1/2 text-[11px] text-zinc-500 tabular-nums"
+                  style={{ top: i * HOUR_PX }}
+                >
+                  {i === 0 ? "" : `${String(h).padStart(2, "0")}:00`}
+                </span>
+              ))}
+            </div>
 
-                {placed.map(({ item, top, height, col, cols }) => {
-                  const compact = height < 40;
-                  const draggable = canDrag(item, role) && !picking;
-                  const dragging = move?.moved && move.slotId === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onPointerDown={onItemPointerDown(item, dayIndex, top)}
-                      onPointerMove={onItemPointerMove}
-                      onPointerUp={onItemPointerUp}
-                      onPointerCancel={() => setMove(null)}
-                      onClick={() => {
-                        if (justDragged.current) {
-                          justDragged.current = false;
-                          return;
-                        }
-                        onItemClick(item);
-                      }}
-                      title={`${fmtTime(item.start)}–${fmtTime(item.end)} ${itemTitle(item, role)}`}
-                      className={cn(
-                        "absolute overflow-hidden rounded-md px-1.5 py-0.5 text-left text-xs leading-tight shadow-[0_1px_2px_rgba(0,0,0,0.08)] transition-shadow hover:z-10 hover:shadow-md focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-zinc-900",
-                        itemClass(item, role),
-                        isDimmed(item, focus, picking) && "opacity-45 hover:opacity-90",
-                        compact ? "flex items-center gap-1" : "flex flex-col justify-start",
-                        draggable && "cursor-grab active:cursor-grabbing",
-                        linked.has(item.id) && "z-10 ring-2 ring-zinc-900 ring-offset-1",
-                        picking &&
-                          item.kind === "slot" &&
-                          item.view.display === "OPEN" &&
-                          "ring-2 ring-violet-500",
-                        dragging && "opacity-40",
-                      )}
+            {days.map((day, dayIndex) => {
+              const placed = layoutDay(itemsOnDay(items, day));
+              const isToday = isSameDay(day, today);
+              const createPreview = create?.dayIndex === dayIndex ? createRange(create) : null;
+              const ghost =
+                plan && plan.kind !== "none" && isSameDay(new Date(plan.start), day) ? plan : null;
+              const pendingHere =
+                pendingRange && isSameDay(new Date(pendingRange.start), day) ? pendingRange : null;
+              return (
+                <div
+                  key={day.toISOString()}
+                  ref={(el) => {
+                    columnsRef.current[dayIndex] = el;
+                  }}
+                  onPointerDown={onColumnPointerDown(dayIndex)}
+                  onPointerMove={onColumnPointerMove(dayIndex)}
+                  onPointerLeave={() => setHover(null)}
+                  onClick={onColumnClick(dayIndex)}
+                  onPointerUp={onColumnPointerUp}
+                  onPointerCancel={() => setCreate(null)}
+                  className={cn(
+                    "relative border-l border-zinc-200 select-none",
+                    isToday && "bg-mint-50/40",
+                    canCreate && "cursor-cell",
+                  )}
+                  style={{ height: minToPx(TOTAL_MIN) }}
+                >
+                  {/* 1시간 실선 · 30분 점선 · 15분 얇은 점선 */}
+                  {HOURS.map((h, i) => (
+                    <div
+                      key={h}
+                      className="pointer-events-none absolute inset-x-0"
+                      style={{ top: i * HOUR_PX }}
+                    >
+                      {i > 0 && <div className="border-t border-zinc-300" />}
+                      {[1, 3].map((q) => (
+                        <div
+                          key={q}
+                          className="absolute inset-x-0 border-t-[0.5px] border-dotted border-zinc-200"
+                          style={{ top: (HOUR_PX / 4) * q }}
+                        />
+                      ))}
+                      <div
+                        className="absolute inset-x-0 border-t border-dashed border-zinc-300/80"
+                        style={{ top: HOUR_PX / 2 }}
+                      />
+                    </div>
+                  ))}
+
+                  {placed.map(({ item, top, height, col, cols }) => {
+                    const compact = height < 40;
+                    const draggable = canDrag(item, role) && !picking;
+                    const dragging = move?.moved && move.slotId === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onPointerDown={onItemPointerDown(item, dayIndex, top)}
+                        onPointerMove={onItemPointerMove}
+                        onPointerUp={onItemPointerUp}
+                        onPointerCancel={() => setMove(null)}
+                        onClick={() => {
+                          if (justDragged.current) {
+                            justDragged.current = false;
+                            return;
+                          }
+                          onItemClick(item);
+                        }}
+                        title={`${fmtTime(item.start)}–${fmtTime(item.end)} ${itemTitle(item, role)}`}
+                        className={cn(
+                          "absolute overflow-hidden rounded-md px-1.5 py-0.5 text-left text-xs leading-tight shadow-[0_1px_2px_rgba(0,0,0,0.08)] transition-shadow hover:z-10 hover:shadow-md focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-zinc-900",
+                          itemClass(item, role),
+                          isDimmed(item, focus, picking) && "opacity-45 hover:opacity-90",
+                          compact ? "flex items-center gap-1" : "flex flex-col justify-start",
+                          draggable && "cursor-grab active:cursor-grabbing",
+                          linked.has(item.id) && "z-10 ring-2 ring-zinc-900 ring-offset-1",
+                          picking &&
+                            item.kind === "slot" &&
+                            item.view.display === "OPEN" &&
+                            "ring-2 ring-violet-500",
+                          dragging && "opacity-40",
+                        )}
+                        style={{
+                          top: top + 1,
+                          height: height - 2,
+                          left: `calc(${(col / cols) * 100}% + 2px)`,
+                          width: `calc(${100 / cols}% - 4px)`,
+                        }}
+                      >
+                        <span className="block truncate font-semibold">
+                          {itemTitle(item, role)}
+                        </span>
+                        <span className="block truncate tabular-nums opacity-90">
+                          {fmtTime(item.start)}–{fmtTime(item.end)}
+                        </span>
+                      </button>
+                    );
+                  })}
+
+                  {hover?.dayIndex === dayIndex && !createPreview && !move && (
+                    <div
+                      className="pointer-events-none absolute inset-x-0.5 z-0 rounded-md border border-dashed border-mint-500 bg-mint-50/70 px-1.5 py-0.5 text-[11px] font-semibold text-mint-800"
                       style={{
-                        top: top + 1,
-                        height: height - 2,
-                        left: `calc(${(col / cols) * 100}% + 2px)`,
-                        width: `calc(${100 / cols}% - 4px)`,
+                        top: minToPx(
+                          createRange({ dayIndex, anchor: hover.min, current: hover.min }).start,
+                        ),
+                        height: minToPx(60),
                       }}
                     >
-                      <span className="block truncate font-semibold">{itemTitle(item, role)}</span>
-                      <span className="block truncate tabular-nums opacity-90">
-                        {fmtTime(item.start)}–{fmtTime(item.end)}
+                      {fmtMin(
+                        createRange({ dayIndex, anchor: hover.min, current: hover.min }).start,
+                      )}
+                      부터 60분
+                    </div>
+                  )}
+
+                  {createPreview && (
+                    <div
+                      className="pointer-events-none absolute inset-x-0.5 rounded-md border-2 border-dashed border-mint-600 bg-mint-200/60 px-1.5 py-0.5 text-xs font-semibold text-mint-800"
+                      style={{
+                        top: minToPx(createPreview.start),
+                        height: minToPx(createPreview.end - createPreview.start),
+                      }}
+                    >
+                      새 슬롯 {fmtMin(createPreview.start)}–{fmtMin(createPreview.end)}
+                    </div>
+                  )}
+
+                  {pendingHere && !ghost && (
+                    <div
+                      className="pointer-events-none absolute inset-x-0.5 z-10 rounded-md border-2 border-dashed border-violet-600 bg-violet-100/80 px-1.5 py-0.5 text-xs font-semibold text-violet-900"
+                      style={{
+                        top: minToPx(minutesFromDayStart(new Date(pendingHere.start))),
+                        height: minToPx(
+                          (Date.parse(pendingHere.end) - Date.parse(pendingHere.start)) / 60000,
+                        ),
+                      }}
+                    >
+                      변경 희망 (전송 전)
+                    </div>
+                  )}
+
+                  {ghost && (
+                    <div
+                      className={cn(
+                        "pointer-events-none absolute inset-x-0.5 z-30 rounded-md border-2 border-dashed px-1.5 py-0.5 text-xs leading-tight font-semibold shadow-lg",
+                        ghost.kind === "invalid"
+                          ? "border-red-600 bg-red-50/95 text-red-800"
+                          : ghost.kind === "move"
+                            ? "border-mint-700 bg-mint-100/95 text-mint-900"
+                            : "border-violet-600 bg-violet-100/95 text-violet-900",
+                      )}
+                      style={{
+                        top: minToPx(minutesFromDayStart(new Date(ghost.start))),
+                        height: minToPx((Date.parse(ghost.end) - Date.parse(ghost.start)) / 60000),
+                      }}
+                    >
+                      <span className="block tabular-nums">
+                        {fmtTime(ghost.start)}–{fmtTime(ghost.end)}
                       </span>
-                    </button>
-                  );
-                })}
+                      <span className="block">
+                        {ghost.kind === "invalid" ? ghost.reason : GHOST_TEXT[ghost.kind]}
+                      </span>
+                    </div>
+                  )}
 
-                {hover?.dayIndex === dayIndex && !createPreview && !move && (
-                  <div
-                    className="pointer-events-none absolute inset-x-0.5 z-0 rounded-md border border-dashed border-mint-500 bg-mint-50/70 px-1.5 py-0.5 text-[11px] font-semibold text-mint-800"
-                    style={{
-                      top: minToPx(createRange({ dayIndex, anchor: hover.min, current: hover.min }).start),
-                      height: minToPx(60),
-                    }}
-                  >
-                    {fmtMin(createRange({ dayIndex, anchor: hover.min, current: hover.min }).start)}부터 60분
-                  </div>
-                )}
-
-                {createPreview && (
-                  <div
-                    className="pointer-events-none absolute inset-x-0.5 rounded-md border-2 border-dashed border-mint-600 bg-mint-200/60 px-1.5 py-0.5 text-xs font-semibold text-mint-800"
-                    style={{
-                      top: minToPx(createPreview.start),
-                      height: minToPx(createPreview.end - createPreview.start),
-                    }}
-                  >
-                    새 슬롯 {fmtMin(createPreview.start)}–{fmtMin(createPreview.end)}
-                  </div>
-                )}
-
-                {pendingHere && !ghost && (
-                  <div
-                    className="pointer-events-none absolute inset-x-0.5 z-10 rounded-md border-2 border-dashed border-violet-600 bg-violet-100/80 px-1.5 py-0.5 text-xs font-semibold text-violet-900"
-                    style={{
-                      top: minToPx(minutesFromDayStart(new Date(pendingHere.start))),
-                      height: minToPx(
-                        (Date.parse(pendingHere.end) - Date.parse(pendingHere.start)) / 60000,
-                      ),
-                    }}
-                  >
-                    변경 희망 (전송 전)
-                  </div>
-                )}
-
-                {ghost && (
-                  <div
-                    className={cn(
-                      "pointer-events-none absolute inset-x-0.5 z-30 rounded-md border-2 border-dashed px-1.5 py-0.5 text-xs leading-tight font-semibold shadow-lg",
-                      ghost.kind === "invalid"
-                        ? "border-red-600 bg-red-50/95 text-red-800"
-                        : ghost.kind === "move"
-                          ? "border-mint-700 bg-mint-100/95 text-mint-900"
-                          : "border-violet-600 bg-violet-100/95 text-violet-900",
-                    )}
-                    style={{
-                      top: minToPx(minutesFromDayStart(new Date(ghost.start))),
-                      height: minToPx((Date.parse(ghost.end) - Date.parse(ghost.start)) / 60000),
-                    }}
-                  >
-                    <span className="block tabular-nums">
-                      {fmtTime(ghost.start)}–{fmtTime(ghost.end)}
-                    </span>
-                    <span className="block">
-                      {ghost.kind === "invalid" ? ghost.reason : GHOST_TEXT[ghost.kind]}
-                    </span>
-                  </div>
-                )}
-
-                {isToday && nowMin >= 0 && nowMin <= TOTAL_MIN && (
-                  <div
-                    className="pointer-events-none absolute inset-x-0 z-10 border-t-2 border-coral-500"
-                    style={{ top: minToPx(nowMin) }}
-                  >
-                    <span className="absolute -top-1.5 -left-1 size-2.5 rounded-full bg-coral-500" />
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                  {isToday && nowMin >= 0 && nowMin <= TOTAL_MIN && (
+                    <div
+                      className="pointer-events-none absolute inset-x-0 z-10 border-t-2 border-coral-500"
+                      style={{ top: minToPx(nowMin) }}
+                    >
+                      <span className="absolute -top-1.5 -left-1 size-2.5 rounded-full bg-coral-500" />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
+      {/* 안내 줄은 스크롤 영역 밖에 두어 가로 스크롤·시간 열에 가려지지 않게 한다 */}
       {lessonFilter && !picking && (
-        <p className="sticky bottom-0 left-0 border-t border-zinc-200 bg-white/95 px-4 py-1.5 text-xs text-zinc-600">
+        <p className="shrink-0 border-t border-zinc-200 bg-white px-4 py-1.5 text-xs text-zinc-600">
           {mobile ? (
             role === "INSTRUCTOR" ? (
               <>
-                빈 시간대를 <strong>탭</strong>하면 그 시각부터 슬롯을 열 수 있어요 · 일정은 눌러서 변경
+                빈 시간대를 <strong>탭</strong>하면 그 시각부터 슬롯을 열 수 있어요 · 일정은 눌러서
+                변경
               </>
             ) : (
               <>일정을 눌러 보강 신청 · 일정 변경 요청</>
             )
           ) : role === "INSTRUCTOR" ? (
             <>
-              빈 시간대를 <strong>클릭</strong>(그 시각부터 60분)하거나 <strong>드래그</strong>해 슬롯 열기 ·
-              일정을 <strong>끌어서</strong> 15분 단위로 옮기기
+              빈 시간대를 <strong>클릭</strong>(그 시각부터 60분)하거나 <strong>드래그</strong>해
+              슬롯 열기 · 일정을 <strong>끌어서</strong> 15분 단위로 옮기기
             </>
           ) : (
             <>
-              내 레슨을 <strong>빈 슬롯(가능) 위로 끌어 놓으면</strong> 일정 변경을 요청할 수 있습니다.
+              내 레슨을 <strong>빈 슬롯(가능) 위로 끌어 놓으면</strong> 일정 변경을 요청할 수
+              있습니다.
             </>
           )}
         </p>

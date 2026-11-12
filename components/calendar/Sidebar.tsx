@@ -1,6 +1,17 @@
 "use client";
 
-import { BellRing, BookOpen, Check, Hourglass, Loader2, RefreshCw, RotateCcw, X } from "lucide-react";
+import { useState } from "react";
+import {
+  BellRing,
+  BookOpen,
+  CalendarClock,
+  Check,
+  Hourglass,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   fmtDateTime,
@@ -59,17 +70,29 @@ const HISTORY_STATUS: Record<string, { text: string; cls: string }> = {
 };
 
 export type SidebarSection = "filters" | "plan" | "requests" | "students" | "legend" | "reset";
-const ALL_SECTIONS: SidebarSection[] = ["filters", "plan", "requests", "students", "legend", "reset"];
+const ALL_SECTIONS: SidebarSection[] = [
+  "filters",
+  "plan",
+  "requests",
+  "students",
+  "legend",
+  "reset",
+];
 
 /** PC 사이드바와 모바일 탭 화면이 함께 쓰는 사이드바 내용. show 로 보여 줄 부분을 고른다 */
 export function SidebarContent({
   show: showList = ALL_SECTIONS,
   onNavigate = () => {},
+  onFocusNavigate,
 }: {
   show?: SidebarSection[];
   /** 항목을 눌러 일정으로 이동한 뒤 (모바일: 달력 탭으로 전환, 사이드바 닫기) */
   onNavigate?: () => void;
+  /** 레슨생 강조를 켠 뒤 (휴대폰 메뉴: 달력으로 이동) */
+  onFocusNavigate?: () => void;
 }) {
+  const [confirmReset, setConfirmReset] = useState(false);
+  const setView = useCalendarStore((s) => s.setView);
   const show = new Set(showList);
   const onClose = onNavigate;
   const role = useCalendarStore((s) => s.role);
@@ -113,6 +136,15 @@ export function SidebarContent({
     .sort((a, b) => a.start.localeCompare(b.start));
   const todoCount = todo.length + undecided.length;
   const myPlans = role === "STUDENT" ? activeEnrollments(lesson, actor.userId, now) : [];
+  // 다음 기간이 이미 등록돼 있으면 만료 안내를 하지 않는다
+  const hasNextPeriod = (e: { studentId: string; endDate: string }) =>
+    lesson.enrollments.some((x) => x.studentId === e.studentId && x.startDate > e.endDate);
+  const expiring =
+    role === "INSTRUCTOR"
+      ? lesson.enrollments
+          .filter((e) => !hasNextPeriod(e) && daysLeft(e, now) >= 0 && daysLeft(e, now) <= 30)
+          .sort((a, b) => a.endDate.localeCompare(b.endDate))
+      : [];
 
   const goTo = (r: ScheduleRequest) => {
     // 승인된 변경은 새 슬롯, 그 외에는 유지되는 기존 레슨(없으면 대상 슬롯)으로 이동
@@ -126,8 +158,8 @@ export function SidebarContent({
 
   return (
     <>
-        {show.has("filters") && (
-          <>
+      {show.has("filters") && (
+        <>
           <section>
             <h2 className="mb-2 text-xs font-semibold text-zinc-500">캘린더</h2>
             <ul className="space-y-0.5">
@@ -182,21 +214,43 @@ export function SidebarContent({
               })}
             </ul>
           </section>
-  
-          </>
-        )}
-        {show.has("plan") && (
-          <>
+        </>
+      )}
+      {show.has("plan") && (
+        <>
+          {role === "STUDENT" && myPlans.length === 0 && (
+            <section
+              aria-label="내 수강 정보"
+              className="rounded-xl border border-zinc-200 p-3 text-xs text-zinc-700"
+            >
+              <h2 className="mb-1.5 flex items-center gap-1.5 font-semibold text-zinc-500">
+                <BookOpen className="size-3.5" />내 수강
+              </h2>
+              아직 수강 등록 전입니다. 선생님이 등록하면 정규 레슨이 달력에 자동으로 표시되고, 그
+              뒤부터 보강을 신청할 수 있어요.
+            </section>
+          )}
           {myPlans.map((plan) => {
             const left = daysLeft(plan, now);
             const progress = monthProgress(lesson, plan, now);
             const due = nextPaymentDate(plan, now);
             return (
-              <section key={plan.id} aria-label="내 수강 정보" className="rounded-xl border border-zinc-200 p-3 text-xs">
+              <section
+                key={plan.id}
+                aria-label="내 수강 정보"
+                className="rounded-xl border border-zinc-200 p-3 text-xs"
+              >
                 <h2 className="mb-1.5 flex items-center gap-1.5 font-semibold text-zinc-500">
-                  <BookOpen className="size-3.5" />
-                  내 수강
+                  <BookOpen className="size-3.5" />내 수강
                 </h2>
+                {left <= 30 && !hasNextPeriod(plan) && (
+                  <p className="mb-2 rounded-lg bg-coral-50 px-2.5 py-2 text-coral-800">
+                    등록이 <strong>{fmtDay(new Date(`${plan.endDate}T00:00`))}</strong>에 끝나요 (D-
+                    {left}). 이어서 받으려면 선생님께 재등록을 요청해 주세요.
+                    {makeupSummary(lesson, plan.studentId, now).remaining > 0 &&
+                      " 남은 보강은 종료 전에 잡아 두세요."}
+                  </p>
+                )}
                 <p className="text-sm font-semibold text-zinc-900">{planLabel(plan)}</p>
                 <p className="text-zinc-700">{timesLabel(plan.times)}</p>
                 <dl className="mt-2 space-y-1 text-zinc-700">
@@ -233,7 +287,9 @@ export function SidebarContent({
                     <div className="flex justify-between gap-2">
                       <dt className="text-zinc-500">결제 예정</dt>
                       <dd className="tabular-nums">
-                        {due ? `${fmtDay(due)} · ${won(plan.fee)}` : `남은 결제 없음 (월 ${won(plan.fee)})`}
+                        {due
+                          ? `${fmtDay(due)} · ${won(plan.fee)}`
+                          : `남은 결제 없음 (월 ${won(plan.fee)})`}
                       </dd>
                     </div>
                   )}
@@ -241,15 +297,13 @@ export function SidebarContent({
               </section>
             );
           })}
-  
-          </>
-        )}
-        {show.has("requests") && (
-          <>
+        </>
+      )}
+      {show.has("requests") && (
+        <>
           <section>
             <h2 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-zinc-500">
-              <BellRing className="size-3.5 text-amber-600" />
-              내 응답이 필요한 요청
+              <BellRing className="size-3.5 text-amber-600" />내 응답이 필요한 요청
               {todoCount > 0 && (
                 <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-amber-950">
                   {todoCount}
@@ -274,10 +328,17 @@ export function SidebarContent({
                         className="w-full rounded-lg border border-amber-500 bg-amber-50 px-2.5 py-2 text-left text-xs text-amber-950 transition-colors hover:bg-amber-100"
                       >
                         <span className="mb-1 flex items-center justify-between gap-2">
-                          <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-semibold", REQUEST_KIND_CHIP.HOLIDAY)}>
+                          <span
+                            className={cn(
+                              "rounded px-1.5 py-0.5 text-[11px] font-semibold",
+                              REQUEST_KIND_CHIP.HOLIDAY,
+                            )}
+                          >
                             공휴일 결정
                           </span>
-                          <span className="text-[11px] font-semibold text-amber-800">{slot.holidayName}</span>
+                          <span className="text-[11px] font-semibold text-amber-800">
+                            {slot.holidayName}
+                          </span>
                         </span>
                         {role === "INSTRUCTOR" ? `${userName(slot.studentId)} · ` : ""}
                         {fmtDateTime(slot.start)} · 진행/휴강을 정해 주세요
@@ -288,7 +349,36 @@ export function SidebarContent({
               </div>
             )}
           </section>
-  
+
+          {expiring.length > 0 && (
+            <section aria-label="만료 임박">
+              <h2 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-zinc-500">
+                <CalendarClock className="size-3.5 text-coral-600" />
+                등록 만료 임박 (30일 이내)
+              </h2>
+              <ul className="space-y-1.5">
+                {expiring.map((e) => (
+                  <li key={e.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setView("students");
+                        onClose();
+                      }}
+                      className="w-full rounded-lg border border-coral-200 bg-coral-50 px-2.5 py-2 text-left text-xs text-coral-900 hover:bg-coral-100"
+                    >
+                      <span className="font-semibold">{userName(e.studentId)}</span> ·{" "}
+                      {fmtDay(new Date(`${e.endDate}T00:00`))} 종료 (D-{daysLeft(e, now)}) ·
+                      연장/다음 기간 등록
+                      {makeupSummary(lesson, e.studentId, now).remaining > 0 &&
+                        ` · 남은 보강 ${makeupSummary(lesson, e.studentId, now).remaining}회`}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {waiting.length > 0 && (
             <section>
               <h2 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-zinc-500">
@@ -298,7 +388,7 @@ export function SidebarContent({
               <RequestList items={waiting} role={role} now={now} onPick={goTo} tone="waiting" />
             </section>
           )}
-  
+
           {history.length > 0 && (
             <section>
               <h2 className="mb-2 text-xs font-semibold text-zinc-500">최근 처리 내역</h2>
@@ -310,24 +400,23 @@ export function SidebarContent({
                       onClick={() => goTo(r)}
                       className="w-full rounded-lg border border-zinc-200 px-2.5 py-2 text-left text-xs hover:bg-zinc-50"
                     >
-                    <span className={cn("mr-1.5 font-semibold", HISTORY_STATUS[r.status]?.cls)}>
-                      {HISTORY_STATUS[r.status]?.text}
-                    </span>
-                    {describeHistory(r, role)}
-                    {r.rejectReason && (
-                      <span className="mt-1 block text-zinc-600">사유: {r.rejectReason}</span>
-                    )}
+                      <span className={cn("mr-1.5 font-semibold", HISTORY_STATUS[r.status]?.cls)}>
+                        {HISTORY_STATUS[r.status]?.text}
+                      </span>
+                      {describeHistory(r, role)}
+                      {r.rejectReason && (
+                        <span className="mt-1 block text-zinc-600">사유: {r.rejectReason}</span>
+                      )}
                     </button>
                   </li>
                 ))}
               </ul>
             </section>
           )}
-  
-          </>
-        )}
-        {show.has("students") && (
-          <>
+        </>
+      )}
+      {show.has("students") && (
+        <>
           {role === "INSTRUCTOR" && (
             <section aria-label="레슨생">
               <h2 className="mb-2 flex items-center justify-between text-xs font-semibold text-zinc-500">
@@ -351,44 +440,57 @@ export function SidebarContent({
                       <button
                         type="button"
                         aria-pressed={active}
-                        onClick={() => setFocusStudent(active ? null : st.id)}
+                        onClick={() => {
+                          setFocusStudent(active ? null : st.id);
+                          // 휴대폰 메뉴에서는 강조한 레슨생을 바로 달력에서 보여 준다
+                          if (!active) onFocusNavigate?.();
+                        }}
                         className={cn(
                           "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-zinc-50",
                           active && "bg-zinc-100 font-semibold",
                         )}
                       >
-                        <span className={cn("size-3 shrink-0 rounded-full", studentColor(st.id)?.dot)} />
+                        <span
+                          className={cn("size-3 shrink-0 rounded-full", studentColor(st.id)?.dot)}
+                        />
                         <span className="flex-1">{st.name}</span>
                         <span
                           className={cn(
                             "rounded-full px-1.5 text-[11px] tabular-nums",
-                            m.remaining > 0 ? "bg-orange-100 font-semibold text-orange-900" : "text-zinc-400",
+                            m.remaining > 0
+                              ? "bg-orange-100 font-semibold text-orange-900"
+                              : "text-zinc-400",
                           )}
                           title={`보강 필요 ${m.owed} · 완료 ${m.done} · 예정 ${m.scheduled}`}
                         >
-                          {m.remaining > 0 ? `보강 ${m.remaining}` : m.remaining < 0 ? `추가 ${-m.remaining}` : "0"}
+                          {m.remaining > 0
+                            ? `보강 ${m.remaining}`
+                            : m.remaining < 0
+                              ? `추가 ${-m.remaining}`
+                              : "0"}
                         </span>
                       </button>
                     </li>
                   );
                 })}
               </ul>
-              <p className="mt-1 px-2 text-[11px] text-zinc-500">이름을 누르면 그 레슨생 일정만 강조합니다.</p>
+              <p className="mt-1 px-2 text-[11px] text-zinc-500">
+                이름을 누르면 그 레슨생 일정만 강조합니다.
+              </p>
             </section>
           )}
-  
-          </>
-        )}
-        {show.has("legend") && (
-          <>
+        </>
+      )}
+      {show.has("legend") && (
+        <>
           <section>
             <h2 className="mb-2 text-xs font-semibold text-zinc-500">레슨 상태</h2>
             <ul className="space-y-1.5">
               {LEGEND.filter((l) => role === "STUDENT" || l.display !== "CLOSED").map((l) => (
                 <li key={l.display} className="flex items-center gap-2 text-xs text-zinc-700">
                   {role === "STUDENT" && l.display === "OPEN" ? (
-                  <span className={cn("h-4 w-7 shrink-0 rounded", STUDENT_OPEN_STYLE)} />
-                ) : role === "INSTRUCTOR" && l.display === "CONFIRMED" ? (
+                    <span className={cn("h-4 w-7 shrink-0 rounded", STUDENT_OPEN_STYLE)} />
+                  ) : role === "INSTRUCTOR" && l.display === "CONFIRMED" ? (
                     <span className="flex h-4 w-7 shrink-0 overflow-hidden rounded" aria-hidden>
                       {STUDENTS.map((st) => (
                         <span key={st.id} className={cn("flex-1", studentColor(st.id)?.dot)} />
@@ -397,7 +499,9 @@ export function SidebarContent({
                   ) : (
                     <span className={cn("h-4 w-7 shrink-0 rounded", SLOT_STYLES[l.display])} />
                   )}
-                  <span className="shrink-0 font-medium whitespace-nowrap text-zinc-900">{l.label}</span>
+                  <span className="shrink-0 font-medium whitespace-nowrap text-zinc-900">
+                    {l.label}
+                  </span>
                   <span className="min-w-0 truncate text-zinc-500" title={l.hint}>
                     {role === "INSTRUCTOR" && l.display === "CONFIRMED" ? "레슨생별 색" : l.hint}
                   </span>
@@ -405,22 +509,52 @@ export function SidebarContent({
               ))}
             </ul>
           </section>
-  
-          </>
-        )}
-        {show.has("reset") && (
-          <>
+        </>
+      )}
+      {show.has("reset") && (
+        <>
           <div className="mt-auto flex items-center justify-between pt-2">
-            <Button variant="ghost" size="sm" className="text-xs text-zinc-600" onClick={resetDemo}>
-              <RotateCcw />
-              데모 데이터 초기화
-            </Button>
-            <Button variant="ghost" size="icon" className="lg:hidden" aria-label="닫기" onClick={onClose}>
+            {confirmReset ? (
+              <span className="flex items-center gap-1.5 text-xs text-zinc-700">
+                모든 변경을 지울까요?
+                <Button
+                  variant="danger"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    resetDemo();
+                    setConfirmReset(false);
+                  }}
+                >
+                  초기화
+                </Button>
+                <Button size="sm" className="h-7 text-xs" onClick={() => setConfirmReset(false)}>
+                  취소
+                </Button>
+              </span>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs text-zinc-600"
+                onClick={() => setConfirmReset(true)}
+              >
+                <RotateCcw />
+                데모 데이터 초기화
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="lg:hidden"
+              aria-label="닫기"
+              onClick={onClose}
+            >
               <X />
             </Button>
           </div>
-          </>
-        )}
+        </>
+      )}
     </>
   );
 }
@@ -485,7 +619,12 @@ function RequestList({
               >
                 {requestKindLabel(r)}
               </span>
-              <span className={cn("text-[11px]", tone === "todo" ? "font-semibold text-amber-800" : "text-zinc-500")}>
+              <span
+                className={cn(
+                  "text-[11px]",
+                  tone === "todo" ? "font-semibold text-amber-800" : "text-zinc-500",
+                )}
+              >
                 {tone === "todo" ? "응답 필요" : "대기 중"} · {timeAgo(r.createdAt, now)}
               </span>
             </span>

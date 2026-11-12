@@ -22,7 +22,7 @@ import { INSTRUCTOR, STUDENTS } from "@/lib/mock-data";
 import { studentColor } from "@/lib/student-colors";
 import { cn } from "@/lib/utils";
 import { useCalendarStore } from "@/store/calendar-store";
-import type { Enrollment, User, WeeklyTime } from "@/types/calendar";
+import type { Enrollment, LessonState, User, WeeklyTime } from "@/types/calendar";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -36,6 +36,41 @@ const patternOf = (weeks: number[]) =>
   WEEK_PATTERNS.find((p) => p.weeks.join() === weeks.join())?.id ?? "weekly";
 
 const DEADLINES = [0, 6, 12, 24, 48, 72];
+
+/** 종료 며칠 전부터 '만료 임박'으로 보여 줄지 */
+export const EXPIRY_NOTICE_DAYS = 30;
+
+type StudentFilter = "all" | "expiring" | "makeup" | "unregistered";
+const FILTERS: { id: StudentFilter; label: string }[] = [
+  { id: "all", label: "전체" },
+  { id: "expiring", label: "만료 임박" },
+  { id: "makeup", label: "보강 남음" },
+  { id: "unregistered", label: "미등록" },
+];
+
+function matchesFilter(filter: StudentFilter, studentId: string, lesson: LessonState, now: string) {
+  const todayKey = toDateKey(new Date(now));
+  const current = lesson.enrollments.filter(
+    (e) => e.studentId === studentId && e.endDate >= todayKey,
+  );
+  switch (filter) {
+    case "all":
+      return true;
+    case "unregistered":
+      return current.length === 0;
+    case "makeup":
+      return makeupSummary(lesson, studentId, now).remaining > 0;
+    case "expiring": {
+      // 다음 기간이 이미 등록돼 있으면 만료 임박이 아니다
+      const lastEnd = current
+        .map((e) => e.endDate)
+        .sort()
+        .at(-1);
+      if (!lastEnd) return false;
+      return daysLeft({ ...current[0], endDate: lastEnd }, now) <= EXPIRY_NOTICE_DAYS;
+    }
+  }
+}
 const deadlineLabel = (h: number) => (h > 0 ? `레슨 ${h}시간 전까지` : "제한 없음");
 const shortDate = (key: string) => key.replaceAll("-", ".");
 
@@ -55,6 +90,14 @@ export function StudentsView() {
   const enrolled = STUDENTS.filter((u) =>
     lesson.enrollments.some((e) => e.studentId === u.id && e.endDate >= todayKey),
   ).length;
+  const [filter, setFilter] = useState<StudentFilter>("all");
+  const counts = Object.fromEntries(
+    FILTERS.map((f) => [
+      f.id,
+      STUDENTS.filter((u) => matchesFilter(f.id, u.id, lesson, now)).length,
+    ]),
+  ) as Record<StudentFilter, number>;
+  const shown = STUDENTS.filter((u) => matchesFilter(filter, u.id, lesson, now));
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-zinc-50 p-4">
@@ -88,8 +131,38 @@ export function StudentsView() {
           </div>
         )}
 
+        <div
+          role="tablist"
+          aria-label="레슨생 필터"
+          className="mb-3 flex gap-1.5 overflow-x-auto pb-1"
+        >
+          {FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              role="tab"
+              aria-selected={filter === f.id}
+              onClick={() => setFilter(f.id)}
+              className={cn(
+                "flex h-9 shrink-0 items-center gap-1 rounded-full border px-3 text-sm",
+                filter === f.id
+                  ? "border-zinc-800 bg-zinc-800 text-white"
+                  : "border-zinc-300 bg-white text-zinc-700",
+              )}
+            >
+              {f.label}
+              <span className="text-xs tabular-nums opacity-80">{counts[f.id]}</span>
+            </button>
+          ))}
+        </div>
+
         <ul className="grid gap-3 lg:grid-cols-2">
-          {STUDENTS.map((student) => (
+          {shown.length === 0 && (
+            <li className="rounded-xl bg-white p-6 text-center text-sm text-zinc-500">
+              해당하는 레슨생이 없습니다.
+            </li>
+          )}
+          {shown.map((student) => (
             <li key={student.id}>
               <StudentCard student={student} />
             </li>
@@ -143,7 +216,7 @@ function StudentCard({ student }: { student: User }) {
                   시작 전
                 </span>
               )}
-              {!upcoming && left <= 14 && (
+              {!upcoming && left <= EXPIRY_NOTICE_DAYS && (
                 <span className="rounded-full bg-coral-100 px-2 py-0.5 text-xs font-semibold text-coral-800">
                   등록 종료 D-{left}
                 </span>
@@ -308,7 +381,7 @@ function PlanForm({
       weeks.join() !== enrollment.weeks.join());
   const valid = startDate && endDate && startDate <= endDate && times.every((t) => t.time);
   // 저장할 때와 같은 로직을 미리 돌려 정확한 생성 수·겹침·오류를 보여 준다 (상태는 바뀌지 않음)
-  let preview: { created: number; conflicts: number } | null = null;
+  let preview: { created: number; conflicts: number; details: string[] } | null = null;
   let previewError: string | null = null;
   if (valid && (!editing || scheduleChanged)) {
     const dry: MachineContext = { now: () => now, id: (p) => `preview-${p}` };
@@ -339,7 +412,19 @@ function PlanForm({
             dry,
             noHoliday,
           );
-      preview = { created: r.created, conflicts: r.conflicts.length };
+      // 겹치는 날짜와 상대(강사 화면이므로 이름 표시)를 몇 건 보여 준다
+      const details = r.conflicts.slice(0, 3).map((c) => {
+        const other = lesson.slots.find(
+          (x) =>
+            x.status !== "SKIPPED" &&
+            x.status !== "OPEN" &&
+            x.enrollmentId !== enrollment?.id &&
+            Date.parse(x.start) < Date.parse(c.end) &&
+            Date.parse(c.start) < Date.parse(x.end),
+        );
+        return `${fmtDateTime(c.start)}${other?.studentId ? ` ${STUDENTS.find((u) => u.id === other.studentId)?.name ?? ""}` : ""}`;
+      });
+      preview = { created: r.created, conflicts: r.conflicts.length, details };
     } catch (e) {
       if (!(e instanceof LessonError)) throw e;
       previewError = e.message;
@@ -389,7 +474,7 @@ function PlanForm({
       <h4 className="text-sm font-bold">{editing ? "등록 수정" : `${student.name} 수강 등록`}</h4>
 
       {!editing && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           <label className={labelCls} htmlFor={`start-${uid}`}>
             시작일
             <input
@@ -600,7 +685,10 @@ function PlanForm({
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-700" />
           <span>
             그 밖에 <strong>{preview.conflicts}건</strong>은 다른 레슨과 겹쳐 &lsquo;미배정&rsquo;이
-            되고 보강 필요로 집계됩니다. 시간을 바꾸는 것을 검토해 주세요.
+            되고 보강 필요로 집계됩니다: {preview.details.join(", ")}
+            {preview.conflicts > preview.details.length &&
+              ` 외 ${preview.conflicts - preview.details.length}건`}
+            . 시간을 바꾸는 것을 검토해 주세요.
           </span>
         </p>
       )}
@@ -739,6 +827,11 @@ function EndForm({ enrollment, onDone }: { enrollment: Enrollment; onDone: () =>
           마지막 날은 오늘({shortDate(minEnd)}) 이후로 정해 주세요. 지난 레슨 기록은 지우지
           않습니다.
         </p>
+      ) : endDate === enrollment.endDate ? (
+        <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+          이미 {shortDate(endDate)}에 끝나는 등록입니다. 바꿀 것이 없습니다. 이어서 받으려면
+          &lsquo;연장&rsquo; 또는 &lsquo;다음 기간 등록&rsquo;을 사용해 주세요.
+        </p>
       ) : (
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
           {shortDate(endDate)} 이후의 레슨 <strong>{removed}건</strong>이 삭제되고, 걸려 있던 요청은
@@ -750,7 +843,7 @@ function EndForm({ enrollment, onDone }: { enrollment: Enrollment; onDone: () =>
           type="submit"
           variant="danger"
           size="sm"
-          disabled={!endDate || endDate < minEnd || endDate > enrollment.endDate}
+          disabled={!endDate || endDate < minEnd || endDate >= enrollment.endDate}
         >
           종료 확정
         </Button>
@@ -799,7 +892,9 @@ function MakeupPanel({ student }: { student: User }) {
           <span className="sr-only">· 보강 잡기</span>
         </button>
       </div>
-      {picking && <MakeupPicker student={student} remaining={m.remaining} onDone={() => setPicking(false)} />}
+      {picking && (
+        <MakeupPicker student={student} remaining={m.remaining} onDone={() => setPicking(false)} />
+      )}
       <p className="mt-1 text-xs text-zinc-600 tabular-nums">
         필요 {m.owed} · 완료 {m.done} · 예정 {m.scheduled}
         {m.requested > 0 && ` · 신청 중 ${m.requested}`}
@@ -830,7 +925,12 @@ function MakeupPanel({ student }: { student: User }) {
           <Button size="sm" onClick={() => setAdjust(1)}>
             보강 +1
           </Button>
-          <Button size="sm" onClick={() => setAdjust(-1)}>
+          <Button
+            size="sm"
+            disabled={m.owed <= 0}
+            title={m.owed <= 0 ? "보강 필요가 0회라 줄일 수 없습니다" : undefined}
+            onClick={() => setAdjust(-1)}
+          >
             보강 −1
           </Button>
         </div>
@@ -892,7 +992,9 @@ function MakeupPicker({
     .sort((a, b) => a.start.localeCompare(b.start))
     .slice(0, 20);
   const clashes = (start: string, end: string) =>
-    mine.some((x) => Date.parse(x.start) < Date.parse(end) && Date.parse(start) < Date.parse(x.end));
+    mine.some(
+      (x) => Date.parse(x.start) < Date.parse(end) && Date.parse(start) < Date.parse(x.end),
+    );
 
   return (
     <form
@@ -904,8 +1006,8 @@ function MakeupPicker({
       }}
     >
       <p className="text-xs text-emerald-950">
-        열어 둔 빈 시간 중에서 고르면 <strong>{student.name}</strong>에게 보강을 제안합니다. 레슨생이 동의하면
-        확정됩니다.
+        열어 둔 빈 시간 중에서 고르면 <strong>{student.name}</strong>에게 보강을 제안합니다.
+        레슨생이 동의하면 확정됩니다.
         {remaining <= 0 && " (남은 보강이 없어 추가 레슨이 됩니다)"}
       </p>
       {open.length === 0 ? (

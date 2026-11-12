@@ -89,7 +89,12 @@ export function MobileTabView({ view }: { view: "requests" | "plan" | "menu" }) 
             <UpcomingLessons />
           </>
         )}
-        {view === "menu" && <SidebarContent show={["filters", "students", "legend", "reset"]} />}
+        {view === "menu" && (
+          <SidebarContent
+            show={["filters", "students", "legend", "reset"]}
+            onFocusNavigate={() => useCalendarStore.getState().setView("month")}
+          />
+        )}
       </div>
     </div>
   );

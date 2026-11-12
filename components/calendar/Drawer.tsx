@@ -48,9 +48,11 @@ import {
   canCancel,
   canResolve,
   changeDeadlinePassed,
+  canRestoreMissed,
   changeLimitLabel,
   changeLimitMs,
   deadlineHours,
+  enrollmentEndMs,
   enrollmentOf,
   makeupSummary,
   SKIP_REASON_LABEL,
@@ -86,7 +88,11 @@ export function Drawer() {
   if (drawer.type === "day") {
     title = fmtDay(drawer.date);
     body = (
-      <DayPanel key={`${drawer.date}-${drawer.time}-${userId}`} date={drawer.date} time={drawer.time} />
+      <DayPanel
+        key={`${drawer.date}-${drawer.time}-${userId}`}
+        date={drawer.date}
+        time={drawer.time}
+      />
     );
   } else if (drawer.type === "slot") {
     title = "레슨 일정";
@@ -125,7 +131,13 @@ export function Drawer() {
           </div>
           <div className="flex items-center justify-between border-b border-zinc-200 px-4 pb-2">
             <h2 className="text-base font-bold">{title}</h2>
-            <Button variant="ghost" size="icon" className="size-10" aria-label="닫기" onClick={close}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-10"
+              aria-label="닫기"
+              onClick={close}
+            >
               <X />
             </Button>
           </div>
@@ -280,9 +292,7 @@ function ExternalPanel({ eventId }: { eventId: string }) {
   const openDrawer = useCalendarStore((s) => s.openDrawer);
   if (!event) return <Empty>일정을 찾을 수 없습니다.</Empty>;
 
-  const overlapping = views.filter(
-    (v) => !v.masked && conflictsFor(v.slot, [event]).length > 0,
-  );
+  const overlapping = views.filter((v) => !v.masked && conflictsFor(v.slot, [event]).length > 0);
 
   return (
     <div className="flex-1 space-y-4 overflow-y-auto p-4">
@@ -290,7 +300,9 @@ function ExternalPanel({ eventId }: { eventId: string }) {
         <span
           className={cn(
             "inline-block rounded-full px-2.5 py-0.5 text-xs font-medium",
-            event.provider === "GOOGLE" ? "bg-blue-100 text-blue-900" : "bg-coral-100 text-coral-800",
+            event.provider === "GOOGLE"
+              ? "bg-blue-100 text-blue-900"
+              : "bg-coral-100 text-coral-800",
           )}
         >
           {calendarLabel(event.provider)}
@@ -366,6 +378,20 @@ function SlotPanel({ slotId }: { slotId: string }) {
   const deadlinePassed = role === "STUDENT" && changeDeadlinePassed(lesson, slot, now);
   const isPast = new Date(slot.start) < new Date(now);
   const isEnded = new Date(slot.end) <= new Date(now);
+  // 레슨생 보강 신청 전 확인: 등록 여부, 등록 기간, 남은 보강
+  const myEnrollments = lesson.enrollments.filter((e) => e.studentId === actor.userId);
+  const myLastEnd = myEnrollments.length
+    ? Math.max(...myEnrollments.map((e) => enrollmentEndMs(e)))
+    : 0;
+  const bookingBlock =
+    role !== "STUDENT" || display !== "OPEN"
+      ? null
+      : myEnrollments.length === 0
+        ? "아직 수강 등록 전이라 보강을 신청할 수 없습니다. 선생님께 등록을 요청해 주세요."
+        : Date.parse(slot.start) > myLastEnd
+          ? "등록 기간이 끝난 뒤의 시간입니다. 재등록 후에 신청할 수 있습니다."
+          : null;
+  const myMakeup = makeupSummary(lesson, actor.userId, now);
   // 이 슬롯에서 처리가 끝난 요청 (강사는 전부, 레슨생은 자기 요청만 — 재사용된 슬롯의 남의 기록은 숨김)
   const pastRequests = requests
     .filter(
@@ -401,11 +427,17 @@ function SlotPanel({ slotId }: { slotId: string }) {
   return (
     <>
       {hasChat && (
-        <div role="tablist" aria-label="레슨 일정 보기" className="flex border-b border-zinc-200 px-2">
+        <div
+          role="tablist"
+          aria-label="레슨 일정 보기"
+          className="flex border-b border-zinc-200 px-2"
+        >
           <TabButton active={activeTab === "detail"} onClick={() => setTab("detail")}>
             <ClipboardList />
             상세 · 요청
-            {needsMe && <span className="size-2 rounded-full bg-amber-500" aria-label="응답 필요" />}
+            {needsMe && (
+              <span className="size-2 rounded-full bg-amber-500" aria-label="응답 필요" />
+            )}
           </TabButton>
           <TabButton active={activeTab === "chat"} onClick={() => setTab("chat")}>
             <MessageCircle />
@@ -435,7 +467,8 @@ function SlotPanel({ slotId }: { slotId: string }) {
             </p>
             {slot.studentId && (
               <p className="mt-1 text-sm text-zinc-600">
-                레슨생 {userName(slot.studentId)} · {slot.lessonType === "MAKEUP" ? "보강" : "정규"} 레슨
+                레슨생 {userName(slot.studentId)} · {slot.lessonType === "MAKEUP" ? "보강" : "정규"}{" "}
+                레슨
                 {view.seq &&
                   ` · ${new Date(slot.start).getMonth() + 1}월 ${view.seq.total}회 중 ${view.seq.n}번째`}
               </p>
@@ -460,9 +493,7 @@ function SlotPanel({ slotId }: { slotId: string }) {
             </div>
           </div>
 
-          {request && request.status === "PENDING" && (
-            <RequestCard view={view} views={views} />
-          )}
+          {request && request.status === "PENDING" && <RequestCard view={view} views={views} />}
 
           {pastRequests.length > 0 && <PastRequests items={pastRequests} />}
 
@@ -473,9 +504,35 @@ function SlotPanel({ slotId }: { slotId: string }) {
             <section className="space-y-2">
               {isPast ? (
                 <Hint>이미 지난 시간이라 신청할 수 없습니다.</Hint>
+              ) : bookingBlock ? (
+                <p className="rounded-lg bg-zinc-50 px-3 py-2 text-sm text-zinc-700">
+                  {bookingBlock}
+                </p>
               ) : (
                 <>
-                  <label className="block text-xs font-semibold text-zinc-500" htmlFor="booking-message">
+                  <p
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-xs",
+                      myMakeup.remaining > 0
+                        ? "bg-emerald-50 text-emerald-950"
+                        : "border border-amber-300 bg-amber-50 text-amber-950",
+                    )}
+                  >
+                    {myMakeup.remaining > 0 ? (
+                      <>
+                        남은 보강 <strong>{myMakeup.remaining}회</strong> 중 1회로 신청합니다.
+                      </>
+                    ) : (
+                      <>
+                        남은 보강이 없어 <strong>추가 레슨</strong>으로 요청됩니다. 선생님이
+                        승인하면 확정됩니다.
+                      </>
+                    )}
+                  </p>
+                  <label
+                    className="block text-xs font-semibold text-zinc-500"
+                    htmlFor="booking-message"
+                  >
                     요청 메시지 (선택)
                   </label>
                   <textarea
@@ -495,7 +552,7 @@ function SlotPanel({ slotId }: { slotId: string }) {
                     }}
                   >
                     <Plus />
-                    보강 신청
+                    {myMakeup.remaining > 0 ? "보강 신청" : "추가 레슨으로 신청"}
                   </Button>
                 </>
               )}
@@ -504,8 +561,15 @@ function SlotPanel({ slotId }: { slotId: string }) {
 
           {display === "OPEN" && role === "INSTRUCTOR" && (
             <section className="space-y-2">
-              <Hint>레슨생에게 신청 가능한 빈 슬롯으로 보입니다. 달력에서 끌어서 시간을 옮길 수 있습니다.</Hint>
-              <Button variant="danger" className="w-full" onClick={() => store().deleteSlot(slot.id)}>
+              <Hint>
+                레슨생에게 신청 가능한 빈 슬롯으로 보입니다. 달력에서 끌어서 시간을 옮길 수
+                있습니다.
+              </Hint>
+              <Button
+                variant="danger"
+                className="w-full"
+                onClick={() => store().deleteSlot(slot.id)}
+              >
                 <Trash2 />
                 슬롯 삭제
               </Button>
@@ -523,8 +587,9 @@ function SlotPanel({ slotId }: { slotId: string }) {
               </header>
               <div className="space-y-2 bg-white p-3 text-sm">
                 <p className="text-zinc-700">
-                  이 레슨은 <strong className="text-red-700">{slot.holidayName}</strong>에 잡혀 있습니다.
-                  한쪽이 제안하고 상대방이 동의하면 확정됩니다. 레슨 시작 전까지 정하지 않으면 휴강으로 처리됩니다.
+                  이 레슨은 <strong className="text-red-700">{slot.holidayName}</strong>에 잡혀
+                  있습니다. 한쪽이 제안하고 상대방이 동의하면 확정됩니다. 레슨 시작 전까지 정하지
+                  않으면 휴강으로 처리됩니다.
                 </p>
                 <textarea
                   value={message}
@@ -556,7 +621,10 @@ function SlotPanel({ slotId }: { slotId: string }) {
                   </Button>
                 </div>
                 {deadlinePassed ? (
-                  <Hint>다른 날로 옮기기는 레슨 {deadlineHours(lesson, slot)}시간 전까지만 요청할 수 있습니다.</Hint>
+                  <Hint>
+                    다른 날로 옮기기는 레슨 {deadlineHours(lesson, slot)}시간 전까지만 요청할 수
+                    있습니다.
+                  </Hint>
                 ) : (
                   <Button className="w-full" onClick={() => store().startReschedule(slot.id)}>
                     <ArrowRightLeft />
@@ -580,13 +648,33 @@ function SlotPanel({ slotId }: { slotId: string }) {
               보강 필요 1회로 집계되며, 이 시간은 비어 있는 것으로 처리됩니다.
             </p>
           )}
+          {display === "SKIPPED" &&
+            slot.skipReason === "CONFLICT" &&
+            role === "INSTRUCTOR" &&
+            (canRestoreMissed(lesson, slot, now) ? (
+              <Button
+                variant="primary"
+                className="w-full"
+                onClick={() => store().restoreMissed(slot.id)}
+              >
+                <Check />
+                시간이 비었어요: 원래 시간으로 다시 잡기
+              </Button>
+            ) : (
+              <Hint>
+                아직 다른 레슨과 겹칩니다. 레슨생 관리의 &lsquo;남은 보강&rsquo;에서 다른 시간으로
+                잡을 수 있어요.
+              </Hint>
+            ))}
 
-          {display === "CONFIRMED" && isEnded && <Hint>이미 끝난 레슨이라 일정을 변경할 수 없습니다.</Hint>}
+          {display === "CONFIRMED" && isEnded && (
+            <Hint>이미 끝난 레슨이라 일정을 변경할 수 없습니다.</Hint>
+          )}
 
           {display === "CONFIRMED" && !isEnded && deadlinePassed && (
             <Hint>
-              레슨 시작 {deadlineHours(lesson, slot)}시간 전까지만 일정 변경을 요청할 수 있습니다 (등록 시 합의).
-              급한 사정은 메시지로 알려 주세요.
+              레슨 시작 {deadlineHours(lesson, slot)}시간 전까지만 일정 변경을 요청할 수 있습니다
+              (등록 시 합의). 급한 사정은 메시지로 알려 주세요.
             </Hint>
           )}
 
@@ -649,7 +737,9 @@ function TabButton({
       onClick={onClick}
       className={cn(
         "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm font-medium [&_svg]:size-4",
-        active ? "border-mint-600 text-zinc-900" : "border-transparent text-zinc-500 hover:text-zinc-800",
+        active
+          ? "border-mint-600 text-zinc-900"
+          : "border-transparent text-zinc-500 hover:text-zinc-800",
       )}
     >
       {children}
@@ -711,13 +801,17 @@ function RequestCard({ view, views }: { view: SlotView; views: SlotView[] }) {
         <ol className="flex items-center gap-1 text-[11px]" aria-label="진행 단계">
           <Step done label="요청" />
           <StepLine done />
-          <Step current label={`${request.requestedBy === "INSTRUCTOR" ? "레슨생" : "강사"} 응답`} />
+          <Step
+            current
+            label={`${request.requestedBy === "INSTRUCTOR" ? "레슨생" : "강사"} 응답`}
+          />
           <StepLine />
           <Step label="확정" />
         </ol>
 
         <p className="text-xs text-zinc-600">
-          <span className="font-semibold text-zinc-800">{requester}</span> 요청 · {timeAgo(request.createdAt, now)}
+          <span className="font-semibold text-zinc-800">{requester}</span> 요청 ·{" "}
+          {timeAgo(request.createdAt, now)}
         </p>
 
         {request.kind === "CHANGE" && fromView && toView && (
@@ -731,32 +825,47 @@ function RequestCard({ view, views }: { view: SlotView; views: SlotView[] }) {
 
         {request.kind === "DEFER" && (
           <p className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-zinc-800">
-            <span className="mb-0.5 block text-[11px] font-semibold text-orange-800">보강으로 미루기</span>
-            이 레슨을 취소하고 <strong>보강 필요 1회</strong>로 돌립니다. 새 날짜는 나중에 보강 신청으로 정합니다.
+            <span className="mb-0.5 block text-[11px] font-semibold text-orange-800">
+              보강으로 미루기
+            </span>
+            이 레슨을 취소하고 <strong>보강 필요 1회</strong>로 돌립니다. 새 날짜는 나중에 보강
+            신청으로 정합니다.
           </p>
         )}
 
-        {request.kind === "BOOKING" && role === "INSTRUCTOR" && <MakeupBalance studentId={request.studentId} />}
+        {request.kind === "BOOKING" && role === "INSTRUCTOR" && (
+          <MakeupBalance studentId={request.studentId} />
+        )}
 
         {request.kind === "HOLIDAY" && (
           <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-zinc-800">
             <span className="mb-0.5 block text-[11px] font-semibold text-red-700">
               {view.slot.holidayName} 레슨에 대한 제안
             </span>
-            <strong>{request.holidayProposal === "SKIP" ? "이 날은 쉬기 (휴강)" : "공휴일이지만 그대로 진행"}</strong>
+            <strong>
+              {request.holidayProposal === "SKIP"
+                ? "이 날은 쉬기 (휴강)"
+                : "공휴일이지만 그대로 진행"}
+            </strong>
           </p>
         )}
 
         {request.message && (
           <blockquote className="rounded-lg bg-zinc-50 px-3 py-2 text-zinc-800">
-            <span className="mb-0.5 block text-[11px] font-semibold text-zinc-500">요청 메시지</span>
+            <span className="mb-0.5 block text-[11px] font-semibold text-zinc-500">
+              요청 메시지
+            </span>
             {request.message}
           </blockquote>
         )}
 
         {resolvable && !rejecting && (
           <div className="flex gap-2">
-            <Button variant="primary" className="flex-1" onClick={() => store().approve(request.id)}>
+            <Button
+              variant="primary"
+              className="flex-1"
+              onClick={() => store().approve(request.id)}
+            >
               <Check />
               {role === "INSTRUCTOR" ? "승인" : "동의"}
             </Button>
@@ -856,7 +965,9 @@ function MakeupBalance({ studentId }: { studentId: string }) {
     <p
       className={cn(
         "rounded-lg px-3 py-2 text-xs",
-        after < 0 ? "border border-amber-300 bg-amber-50 text-amber-950" : "bg-zinc-50 text-zinc-700",
+        after < 0
+          ? "border border-amber-300 bg-amber-50 text-amber-950"
+          : "bg-zinc-50 text-zinc-700",
       )}
     >
       {userName(studentId)} 보강: 필요 {m.owed} · 완료 {m.done} · 예정 {m.scheduled} →{" "}
@@ -886,8 +997,8 @@ function DeferBox({ slotId }: { slotId: string }) {
   return (
     <div className="space-y-2 rounded-xl border border-orange-200 bg-orange-50 p-3">
       <p className="text-xs text-orange-950">
-        이 레슨을 취소하고 <strong>보강 필요 1회</strong>로 돌립니다. 새 날짜는 나중에 보강 신청으로 정합니다.{" "}
-        {role === "INSTRUCTOR" ? "레슨생이 동의하면" : "강사가 동의하면"} 확정됩니다.
+        이 레슨을 취소하고 <strong>보강 필요 1회</strong>로 돌립니다. 새 날짜는 나중에 보강 신청으로
+        정합니다. {role === "INSTRUCTOR" ? "레슨생이 동의하면" : "강사가 동의하면"} 확정됩니다.
       </p>
       <textarea
         value={message}
@@ -959,11 +1070,18 @@ function PastRequests({ items }: { items: ScheduleRequest[] }) {
         {items.map((r) => {
           const result = RESULT_LABEL[r.status as keyof typeof RESULT_LABEL];
           return (
-            <li key={r.id} className="rounded-lg border border-zinc-200 px-3 py-2 text-xs text-zinc-700">
+            <li
+              key={r.id}
+              className="rounded-lg border border-zinc-200 px-3 py-2 text-xs text-zinc-700"
+            >
               <p className="flex items-center gap-1.5">
-                <span className={cn("rounded px-1.5 py-0.5 font-semibold", result.cls)}>{result.text}</span>
+                <span className={cn("rounded px-1.5 py-0.5 font-semibold", result.cls)}>
+                  {result.text}
+                </span>
                 <span className="font-medium text-zinc-900">{requestKindLabel(r)}</span>
-                <span>· {r.requestedBy === "INSTRUCTOR" ? INSTRUCTOR.name : userName(r.studentId)} 요청</span>
+                <span>
+                  · {r.requestedBy === "INSTRUCTOR" ? INSTRUCTOR.name : userName(r.studentId)} 요청
+                </span>
               </p>
               {r.message && <p className="mt-1">요청 메시지: {r.message}</p>}
               {r.rejectReason && <p className="mt-1 text-red-800">반려 사유: {r.rejectReason}</p>}
@@ -1036,6 +1154,7 @@ function ReschedulePanel({
   const store = useCalendarStore.getState;
   const views = useSlotViews();
   const lesson = useCalendarStore((s) => s.lesson);
+  const mobile = useIsMobile();
   const myEvents = useMyExternalEvents();
   const [message, setMessage] = useState("");
 
@@ -1046,9 +1165,15 @@ function ReschedulePanel({
   // 정규 레슨은 자기 등록 종료일, 보강 레슨은 레슨생의 가장 늦은 등록 종료일까지
   const limit = changeLimitMs(lesson, from.slot);
   const limitLabel = changeLimitLabel(lesson, from.slot);
+  // 원래 레슨 날짜와 가까운 빈 시간부터 (공휴일 레슨을 옮길 때도 그 주변이 먼저 보인다)
+  const origin = Date.parse(from.slot.start);
   const candidates = views
     .filter((v) => v.display === "OPEN" && v.slot.start > now && Date.parse(v.slot.start) <= limit)
-    .sort((a, b) => a.slot.start.localeCompare(b.slot.start));
+    .sort(
+      (a, b) =>
+        Math.abs(Date.parse(a.slot.start) - origin) - Math.abs(Date.parse(b.slot.start) - origin) ||
+        a.slot.start.localeCompare(b.slot.start),
+    );
   const targetStart = toRange?.start ?? views.find((v) => v.slot.id === toSlotId)?.slot.start;
 
   return (
@@ -1064,14 +1189,21 @@ function ReschedulePanel({
             )}
           >
             <span className="font-semibold">{slotTitle(from, role)}</span>
-            <span className="ml-2 tabular-nums opacity-90">{fmtRange(from.slot.start, from.slot.end)}</span>
+            <span className="ml-2 tabular-nums opacity-90">
+              {fmtRange(from.slot.start, from.slot.end)}
+            </span>
           </div>
         </section>
 
         <fieldset>
           <legend className="mb-1.5 text-xs font-semibold text-zinc-500">
-            변경할 빈 슬롯 선택 (달력에서 &lsquo;가능&rsquo; 슬롯을 눌러도 됩니다)
+            {mobile
+              ? "옮길 빈 시간 선택 (원래 날짜와 가까운 순)"
+              : "변경할 빈 슬롯 선택 (달력에서 ‘가능’ 슬롯을 눌러도 됩니다)"}
           </legend>
+          {role === "INSTRUCTOR" && (
+            <CustomTimePicker durationMs={Date.parse(from.slot.end) - origin} />
+          )}
           {toRange && (
             <div className="mb-1.5 rounded-lg border-2 border-violet-500 bg-violet-50 px-3 py-2 text-sm">
               <span className="block text-xs font-semibold text-violet-800">끌어 놓은 새 시간</span>
@@ -1081,8 +1213,10 @@ function ReschedulePanel({
               </span>
               {conflictsFor(toRange, myEvents).length > 0 && (
                 <span className="mt-0.5 flex items-center gap-1 text-xs text-amber-800">
-                  <AlertTriangle className="size-3 shrink-0" />
-                  내 일정과 겹침: {conflictsFor(toRange, myEvents).map((c) => c.title).join(", ")}
+                  <AlertTriangle className="size-3 shrink-0" />내 일정과 겹침:{" "}
+                  {conflictsFor(toRange, myEvents)
+                    .map((c) => c.title)
+                    .join(", ")}
                 </span>
               )}
             </div>
@@ -1118,8 +1252,8 @@ function ReschedulePanel({
                         <span className="tabular-nums">{fmtRange(v.slot.start, v.slot.end)}</span>
                         {conflicts.length > 0 && (
                           <span className="mt-0.5 flex items-center gap-1 text-xs text-amber-800">
-                            <AlertTriangle className="size-3 shrink-0" />
-                            내 일정과 겹침: {conflicts.map((c) => c.title).join(", ")}
+                            <AlertTriangle className="size-3 shrink-0" />내 일정과 겹침:{" "}
+                            {conflicts.map((c) => c.title).join(", ")}
                           </span>
                         )}
                       </span>
@@ -1145,7 +1279,10 @@ function ReschedulePanel({
         />
       </div>
       <div className="flex gap-2 border-t border-zinc-200 p-3">
-        <Button className="flex-1" onClick={() => store().openDrawer({ type: "slot", slotId: fromSlotId })}>
+        <Button
+          className="flex-1"
+          onClick={() => store().openDrawer({ type: "slot", slotId: fromSlotId })}
+        >
           취소
         </Button>
         <Button
@@ -1193,11 +1330,17 @@ function Messenger({ comments, studentId }: { comments: Comment[]; studentId?: s
             return (
               <li key={c.id}>
                 {newDay && (
-                  <p className="mb-2 text-center text-[11px] text-zinc-400">{fmtDay(c.createdAt)}</p>
+                  <p className="mb-2 text-center text-[11px] text-zinc-400">
+                    {fmtDay(c.createdAt)}
+                  </p>
                 )}
                 <div className={cn("flex flex-col", mine ? "items-end" : "items-start")}>
-                  {!mine && <span className="mb-0.5 text-xs text-zinc-500">{userName(c.authorId)}</span>}
-                  <div className={cn("flex max-w-[85%] items-end gap-1.5", mine && "flex-row-reverse")}>
+                  {!mine && (
+                    <span className="mb-0.5 text-xs text-zinc-500">{userName(c.authorId)}</span>
+                  )}
+                  <div
+                    className={cn("flex max-w-[85%] items-end gap-1.5", mine && "flex-row-reverse")}
+                  >
                     <p
                       className={cn(
                         "rounded-2xl px-3 py-1.5 text-sm break-words whitespace-pre-wrap",
@@ -1299,3 +1442,65 @@ const Hint = ({ children }: { children: ReactNode }) => (
 const Empty = ({ children }: { children: ReactNode }) => (
   <p className="p-6 text-center text-sm text-zinc-500">{children}</p>
 );
+
+/** 강사: 빈 슬롯이 없어도 원하는 날짜·시각을 직접 지정해 변경 제안 (휴대폰에서 드래그 대신) */
+function CustomTimePicker({ durationMs }: { durationMs: number }) {
+  const now = useCalendarStore((s) => s.now);
+  const setRescheduleRange = useCalendarStore((s) => s.setRescheduleRange);
+  const [open, setOpen] = useState(false);
+  const tomorrow = new Date(Date.parse(now) + 86_400_000);
+  const [date, setDate] = useState(
+    `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`,
+  );
+  const [time, setTime] = useState("18:00");
+  if (!open)
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        className="mb-1.5 w-full text-xs"
+        onClick={() => setOpen(true)}
+      >
+        <CalendarClock />빈 슬롯이 아닌 시간으로: 날짜·시각 직접 지정
+      </Button>
+    );
+  return (
+    <div className="mb-2 flex flex-wrap items-end gap-2 rounded-lg border border-violet-200 bg-violet-50 p-2">
+      <label className="text-xs text-zinc-600" htmlFor="custom-date">
+        날짜
+        <input
+          id="custom-date"
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className="mt-1 block h-9 rounded-lg border border-zinc-300 bg-white px-2 text-sm text-zinc-900"
+        />
+      </label>
+      <label className="text-xs text-zinc-600" htmlFor="custom-time">
+        시작
+        <input
+          id="custom-time"
+          type="time"
+          step={900}
+          value={time}
+          onChange={(e) => setTime(e.target.value)}
+          className="mt-1 block h-9 rounded-lg border border-zinc-300 bg-white px-2 text-sm text-zinc-900"
+        />
+      </label>
+      <Button
+        size="sm"
+        className="h-9"
+        disabled={!date || !time}
+        onClick={() => {
+          const start = new Date(`${date}T${time}:00`);
+          setRescheduleRange({
+            start: start.toISOString(),
+            end: new Date(start.getTime() + durationMs).toISOString(),
+          });
+        }}
+      >
+        이 시간으로
+      </Button>
+    </div>
+  );
+}

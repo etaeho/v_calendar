@@ -18,13 +18,13 @@ export function ToastHost() {
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed inset-x-0 bottom-20 z-[60] md:bottom-5 flex justify-center px-4"
+      className="pointer-events-none fixed inset-x-0 top-[calc(env(safe-area-inset-top)+3.25rem)] z-[60] md:top-auto md:bottom-5 flex justify-center px-4"
     >
       {toast && (
         <div
           key={toast.id}
           className={cn(
-            "pointer-events-auto flex max-w-md animate-toast-in items-center gap-2 rounded-xl px-4 py-2.5 text-sm text-white shadow-lg",
+            "pointer-events-none flex max-w-md animate-toast-in md:pointer-events-auto items-center gap-2 rounded-xl px-4 py-2.5 text-sm text-white shadow-lg",
             toast.kind === "error" ? "bg-red-700" : "bg-zinc-800",
           )}
         >

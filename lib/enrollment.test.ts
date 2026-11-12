@@ -28,6 +28,7 @@ import {
   proposeHoliday,
   proposeMakeup,
   rejectRequest,
+  restoreMissed,
   getSlotViews,
   LessonError,
   planDrop,
@@ -53,6 +54,14 @@ const REG = local(2026, 10, 15, 9);
 const regCtx = () => makeCtx(REG);
 const noHoliday: HolidayLookup = () => undefined;
 const christmas: HolidayLookup = (d) => (d.getMonth() === 11 && d.getDate() === 25 ? "크리스마스" : undefined);
+/** 다른 레슨생(s2)이 보강을 신청할 수 있도록 11~12월 등록을 붙인다 (정규 레슨은 만들지 않음) */
+const withS2 = (st: LessonState): LessonState => ({
+  ...st,
+  enrollments: [
+    ...st.enrollments,
+    { id: "e-s2", studentId: "s2", startDate: "2026-11-01", endDate: "2026-12-31", times: [], weeks: weekly, changeDeadlineHours: 0 },
+  ],
+});
 const empty = (): LessonState => ({ enrollments: [], makeupAdjustments: [], slots: [], requests: [], comments: [] });
 const days = (list: { start: Date }[]) => list.map((x) => toDateKey(x.start));
 const throwsCode = (fn: () => unknown, code: string) =>
@@ -130,7 +139,7 @@ describe("수강 등록", () => {
     let st = createOpenSlot(empty(), teacher, { start: local(2026, 11, 17, 19), end: local(2026, 11, 17, 20) }, ctx).state;
     st = createOpenSlot(st, teacher, { start: local(2026, 11, 24, 19, 30), end: local(2026, 11, 24, 20, 30) }, ctx).state;
     const booked = st.slots[1].id;
-    st = approveRequest(requestBooking(st, s2, booked, ctx), teacher, "req-5", ctx);
+    st = approveRequest(requestBooking(withS2(st), s2, booked, ctx), teacher, "req-5", ctx);
     const r = registerEnrollment(st, teacher, input({ endDate: "2026-11-30" }), regCtx(), noHoliday);
     assert.equal(r.created, 3);
     assert.deepEqual(r.conflicts.map((c) => c.start), [local(2026, 11, 24, 19)]);
@@ -274,7 +283,7 @@ describe("보강 관리", () => {
     const ctx = makeCtx();
     // 11/24 화요일 19:00 은 다른 레슨생 보강이 이미 있어 미배정
     let st = createOpenSlot(empty(), teacher, { start: local(2026, 11, 24, 19), end: local(2026, 11, 24, 20) }, ctx).state;
-    st = approveRequest(requestBooking(st, s2, st.slots[0].id, ctx), teacher, "req-3", ctx);
+    st = approveRequest(requestBooking(withS2(st), s2, st.slots[0].id, ctx), teacher, "req-3", ctx);
     st = registerEnrollment(st, teacher, input(), regCtx(), christmas).state;
     const miss = st.slots.find((s) => s.status === "SKIPPED" && s.skipReason === "CONFLICT")!;
     assert.equal(miss.start, local(2026, 11, 24, 19));
@@ -463,5 +472,38 @@ describe("강사의 보강 제안", () => {
     const open = st.slots.find((s) => s.status === "OPEN")!.id;
     const shifted = { ...st, slots: st.slots.map((s) => (s.id === open ? { ...s, start: local(2026, 11, 17, 19, 30) } : s)) };
     throwsCode(() => proposeMakeup(shifted, teacher, open, "s1", ctx), "OVERLAP");
+  });
+});
+
+describe("미배정 다시 잡기", () => {
+  it("겹치던 대기 요청이 거절되면 미배정 레슨을 원래 시간으로 다시 잡을 수 있다", () => {
+    const ctx = makeCtx();
+    let st = createOpenSlot(empty(), teacher, { start: local(2026, 11, 17, 19), end: local(2026, 11, 17, 20) }, ctx).state;
+    const open = st.slots[0].id;
+    st = requestBooking(withS2(st), s2, open, ctx);
+    const reg: MachineContext = { now: () => NOW, id: (p) => `r-${p}` };
+    st = registerEnrollment(st, teacher, input({ startDate: "2026-11-13", endDate: "2026-11-30" }), reg, noHoliday).state;
+    const miss = st.slots.find((s) => s.skipReason === "CONFLICT")!;
+    assert.equal(makeupSummary(st, "s1", NOW).owed, 1);
+    throwsCode(() => restoreMissed(st, teacher, miss.id, ctx), "OVERLAP");
+    st = rejectRequest(st, teacher, st.requests[0].id, ctx);
+    throwsCode(() => restoreMissed(st, s1, miss.id, ctx), "FORBIDDEN");
+    st = restoreMissed(st, teacher, miss.id, ctx);
+    assert.equal(st.slots.find((s) => s.id === miss.id)!.status, "CONFIRMED");
+    assert.equal(st.slots.some((s) => s.id === open), false);
+    assert.equal(makeupSummary(st, "s1", NOW).owed, 0);
+  });
+});
+
+describe("보강 신청은 등록 기간 안에서만", () => {
+  it("미등록 레슨생과 종료일 이후 시간은 신청할 수 없다", () => {
+    const ctx = makeCtx();
+    let st = registerEnrollment(empty(), teacher, input({ endDate: "2026-11-30" }), regCtx(), noHoliday).state;
+    st = createOpenSlot(st, teacher, { start: local(2026, 11, 20, 15), end: local(2026, 11, 20, 16) }, ctx).state;
+    st = createOpenSlot(st, teacher, { start: local(2026, 12, 2, 15), end: local(2026, 12, 2, 16) }, ctx).state;
+    const [nov, dec] = st.slots.filter((s) => s.status === "OPEN").map((s) => s.id);
+    throwsCode(() => requestBooking(st, s2, nov, ctx), "FORBIDDEN");
+    throwsCode(() => requestBooking(st, s1, dec, ctx), "INVALID_STATE");
+    assert.equal(requestBooking(st, s1, nov, ctx).requests.length, 1);
   });
 });

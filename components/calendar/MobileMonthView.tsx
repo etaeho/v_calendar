@@ -13,6 +13,8 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 import {
+  conflictsFor,
+  fmtDateTime,
   fmtDay,
   fmtTime,
   isDimmed,
@@ -23,6 +25,9 @@ import {
   useCalendarItems,
   useFocusStudent,
   useItemClick,
+  useMyExternalEvents,
+  useSlotViews,
+  slotTitle,
   type CalendarItem,
 } from "@/lib/calendar-items";
 import { holidaysOn, mainHoliday } from "@/lib/holidays";
@@ -33,12 +38,15 @@ import type { UserRole } from "@/types/calendar";
 
 /** 달력 칸에 그리는 얇은 막대 색 (일정 종류·상태별) */
 function barClass(item: CalendarItem, role: UserRole): string {
-  if (item.kind === "external") return item.event.provider === "GOOGLE" ? "bg-blue-400" : "bg-coral-400";
+  if (item.kind === "external")
+    return item.event.provider === "GOOGLE" ? "bg-blue-400" : "bg-coral-400";
   switch (item.view.display) {
     case "OPEN":
       return role === "STUDENT" ? "bg-emerald-500" : "bg-white ring-1 ring-inset ring-mint-500";
     case "CONFIRMED":
-      return (role === "INSTRUCTOR" && studentColor(item.view.slot.studentId)?.dot) || "bg-mint-700";
+      return (
+        (role === "INSTRUCTOR" && studentColor(item.view.slot.studentId)?.dot) || "bg-mint-700"
+      );
     case "PENDING_CHANGE_FROM":
     case "PENDING_CHANGE_TO":
       return "bg-violet-400";
@@ -65,6 +73,24 @@ export function MobileMonthView() {
   const onItemClick = useItemClick();
   const focus = useFocusStudent();
   const picking = useCalendarStore((s) => s.drawer.type === "reschedule");
+  const views = useSlotViews();
+  const myEvents = useMyExternalEvents();
+  const setCursor = useCalendarStore((s) => s.setCursor);
+  // 레슨생: 다음 내 레슨 (첫 화면에서 바로 보이게)
+  const nextLesson =
+    role === "STUDENT"
+      ? views
+          .filter((v) => v.mine && v.display !== "SKIPPED" && v.slot.end > now)
+          .sort((a, b) => a.slot.start.localeCompare(b.slot.start))[0]
+      : undefined;
+  const subLabel = (item: CalendarItem) => {
+    if (item.kind === "external")
+      return item.event.provider === "GOOGLE" ? "구글 캘린더" : "카카오 캘린더";
+    if (item.view.display === "OPEN")
+      return role === "STUDENT" ? "선생님 가능 시간 · 눌러서 보강 신청" : "레슨생에게 열어 둔 시간";
+    if (item.view.display === "CLOSED") return "다른 레슨생 일정";
+    return STATUS_LABEL[item.view.display];
+  };
 
   const month = new Date(cursor);
   const today = new Date(now);
@@ -156,14 +182,38 @@ export function MobileMonthView() {
         })}
       </div>
 
-      <section aria-label={`${fmtDay(selectedDay)} 일정`} className="min-h-0 flex-1 overflow-y-auto bg-zinc-50 px-4 py-3">
+      <section
+        aria-label={`${fmtDay(selectedDay)} 일정`}
+        className="min-h-0 flex-1 overflow-y-auto bg-zinc-50 px-4 py-3"
+      >
+        {nextLesson && (
+          <button
+            type="button"
+            onClick={() => {
+              setCursor(new Date(nextLesson.slot.start));
+              openDrawer({ type: "slot", slotId: nextLesson.slot.id });
+            }}
+            className="mb-3 flex w-full items-center gap-3 rounded-xl border border-mint-200 bg-white px-3 py-2.5 text-left"
+          >
+            <span className="shrink-0 rounded-md bg-mint-700 px-2 py-1 text-[11px] font-bold text-white">
+              다음 레슨
+            </span>
+            <span className="min-w-0 flex-1 truncate text-sm">
+              <strong className="tabular-nums">{fmtDateTime(nextLesson.slot.start)}</strong>
+              <span className="text-zinc-600"> · {slotTitle(nextLesson, role)}</span>
+            </span>
+          </button>
+        )}
         <div className="mb-2 flex items-center justify-between gap-2">
           <h2 className="text-sm font-bold">
             {fmtDay(selectedDay)}
             {holidays.map((h) => (
               <span
                 key={h.name}
-                className={cn("ml-1.5 text-xs font-medium", h.dayOff ? "text-red-600" : "text-zinc-500")}
+                className={cn(
+                  "ml-1.5 text-xs font-medium",
+                  h.dayOff ? "text-red-600" : "text-zinc-500",
+                )}
               >
                 {h.name}
               </span>
@@ -175,13 +225,14 @@ export function MobileMonthView() {
               className="h-9"
               onClick={() => openDrawer({ type: "day", date: selectedDay.toISOString() })}
             >
-              <Plus />
-              빈 슬롯 열기
+              <Plus />빈 슬롯 열기
             </Button>
           )}
         </div>
         {dayItems.length === 0 ? (
-          <p className="rounded-xl bg-white px-3 py-6 text-center text-sm text-zinc-500">이 날은 일정이 없습니다.</p>
+          <p className="rounded-xl bg-white px-3 py-6 text-center text-sm text-zinc-500">
+            이 날은 일정이 없습니다.
+          </p>
         ) : (
           <ul className="space-y-2">
             {dayItems.map((item) => (
@@ -201,14 +252,21 @@ export function MobileMonthView() {
                     {fmtTime(item.end)}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-semibold">{itemTitle(item, role)}</span>
-                    <span className="block truncate text-xs opacity-80">
-                      {item.kind === "external"
-                        ? item.event.provider === "GOOGLE"
-                          ? "구글 캘린더"
-                          : "카카오 캘린더"
-                        : STATUS_LABEL[item.view.display]}
+                    <span className="block truncate text-sm font-semibold">
+                      {itemTitle(item, role)}
                     </span>
+                    <span className="block truncate text-xs opacity-80">{subLabel(item)}</span>
+                    {role === "STUDENT" &&
+                      item.kind === "slot" &&
+                      item.view.display === "OPEN" &&
+                      conflictsFor(item.view.slot, myEvents).length > 0 && (
+                        <span className="mt-0.5 block truncate text-xs font-medium text-amber-800">
+                          ⚠ 내 일정과 겹침:{" "}
+                          {conflictsFor(item.view.slot, myEvents)
+                            .map((e) => e.title)
+                            .join(", ")}
+                        </span>
+                      )}
                   </span>
                 </button>
               </li>

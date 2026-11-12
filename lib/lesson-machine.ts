@@ -237,6 +237,16 @@ export function requestBooking(
     throw new LessonError("INVALID_STATE", "이미 마감된 슬롯입니다.");
   if (isPast(slot.start, ctx))
     throw new LessonError("INVALID_STATE", "이미 지난 시간이라 신청할 수 없습니다.");
+  // 보강은 수강 등록 기간 안에서만 신청할 수 있다
+  const mine = state.enrollments.filter((e) => e.studentId === actor.userId);
+  if (mine.length === 0)
+    throw new LessonError("FORBIDDEN", "수강 등록 후에 보강을 신청할 수 있습니다. 선생님께 등록을 요청해 주세요.");
+  const lastEnd = Math.max(...mine.map((e) => enrollmentEndMs(e)));
+  if (Date.parse(slot.start) > lastEnd)
+    throw new LessonError(
+      "INVALID_STATE",
+      "등록 기간이 끝난 뒤의 시간입니다. 재등록 후에 신청해 주세요.",
+    );
 
   const request: ScheduleRequest = {
     id: ctx.id("req"),
@@ -265,6 +275,53 @@ export function requestBooking(
       systemComment(ctx, slot.threadId, "보강 신청이 접수되었습니다. 강사 승인을 기다리는 중입니다."),
     ],
   };
+}
+
+/**
+ * 강사: 등록 때 다른 일정과 겹쳐 '미배정'이 된 정규 레슨을, 그 시간이 비었으면 원래 시간으로 다시 잡는다.
+ * (예: 겹쳤던 보강 신청이 거절된 뒤) 겹치던 빈 슬롯은 레슨으로 대체된다. 보강 필요 횟수는 자동으로 1 줄어든다.
+ */
+export function restoreMissed(
+  state: LessonState,
+  actor: Actor,
+  slotId: string,
+  ctx: MachineContext,
+): LessonState {
+  if (actor.role !== "INSTRUCTOR")
+    throw new LessonError("FORBIDDEN", "강사만 다시 잡을 수 있습니다.");
+  const slot = findSlot(state, slotId);
+  if (slot.status !== "SKIPPED" || slot.skipReason !== "CONFLICT")
+    throw new LessonError("INVALID_STATE", "미배정 레슨만 다시 잡을 수 있습니다.");
+  if (isPast(slot.start, ctx)) throw new LessonError("INVALID_STATE", "이미 지난 시간입니다.");
+  const hits = state.slots.filter(
+    (s) => s.id !== slot.id && occupies(s) && overlaps(s.start, s.end, slot.start, slot.end),
+  );
+  if (hits.some((s) => s.status !== "OPEN"))
+    throw new LessonError("OVERLAP", "아직 다른 레슨과 겹칩니다. 다른 시간으로 보강을 잡아 주세요.");
+  const gone = new Set(hits.map((s) => s.id));
+  return {
+    ...state,
+    slots: state.slots
+      .filter((s) => !gone.has(s.id))
+      .map((s) => (s.id === slot.id ? { ...s, status: "CONFIRMED" as const, skipReason: undefined } : s)),
+    comments: [
+      ...state.comments.filter((c) => !hits.some((h) => h.threadId === c.threadId)),
+      systemComment(ctx, slot.threadId, "시간이 비어 원래 시간으로 레슨을 다시 잡았습니다."),
+    ],
+  };
+}
+
+/** 지금 다시 잡을 수 있는 미배정 레슨인가 (화면에서 버튼 표시용) */
+export function canRestoreMissed(state: LessonState, slot: LessonSlot, now: string): boolean {
+  if (slot.status !== "SKIPPED" || slot.skipReason !== "CONFLICT") return false;
+  if (Date.parse(slot.start) < Date.parse(now)) return false;
+  return !state.slots.some(
+    (s) =>
+      s.id !== slot.id &&
+      occupies(s) &&
+      s.status !== "OPEN" &&
+      overlaps(s.start, s.end, slot.start, slot.end),
+  );
 }
 
 /**
