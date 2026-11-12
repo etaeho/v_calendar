@@ -81,15 +81,7 @@ const userComment = (
   createdAt: ctx.now(),
 });
 
-const withMessage = (
-  ctx: MachineContext,
-  threadId: string,
-  actor: Actor,
-  message: string | undefined,
-): Comment[] => {
-  const body = message?.trim();
-  return body ? [userComment(ctx, threadId, actor, body)] : [];
-};
+const cleanMessage = (message: string | undefined) => message?.trim() || undefined;
 
 /** 빈 슬롯으로 되돌린다. 스레드를 새로 발급해 이전 대화가 다음 사람에게 보이지 않게 한다 */
 const toOpen = (ctx: MachineContext, slot: LessonSlot): LessonSlot => ({
@@ -140,6 +132,28 @@ export function deleteOpenSlot(state: LessonState, actor: Actor, slotId: string)
   };
 }
 
+/** 강사: 빈 슬롯의 시간을 옮긴다 (드래그 앤 드롭) */
+export function moveOpenSlot(
+  state: LessonState,
+  actor: Actor,
+  slotId: string,
+  range: { start: string; end: string },
+): LessonState {
+  if (actor.role !== "INSTRUCTOR")
+    throw new LessonError("FORBIDDEN", "강사만 슬롯을 옮길 수 있습니다.");
+  const slot = findSlot(state, slotId);
+  if (slot.status !== "OPEN")
+    throw new LessonError("INVALID_STATE", "빈 슬롯(OPEN)만 직접 옮길 수 있습니다.");
+  if (!(Date.parse(range.start) < Date.parse(range.end)))
+    throw new LessonError("INVALID_RANGE", "종료 시간이 시작 시간보다 늦어야 합니다.");
+  if (state.slots.some((s) => s.id !== slotId && overlaps(s.start, s.end, range.start, range.end)))
+    throw new LessonError("OVERLAP", "이미 등록된 레슨/슬롯과 시간이 겹칩니다.");
+  return {
+    ...state,
+    slots: replaceSlots(state, [{ ...slot, start: range.start, end: range.end }]),
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* 레슨생: 보강 신청                                                    */
 /* ------------------------------------------------------------------ */
@@ -165,6 +179,7 @@ export function requestBooking(
     requestedBy: "STUDENT",
     toSlotId: slot.id,
     toStart: slot.start,
+    message: cleanMessage(message),
     createdAt: ctx.now(),
   };
   const next: LessonSlot = {
@@ -180,7 +195,6 @@ export function requestBooking(
     comments: [
       ...state.comments,
       systemComment(ctx, slot.threadId, "보강 신청이 접수되었습니다. 강사 승인을 기다리는 중입니다."),
-      ...withMessage(ctx, slot.threadId, actor, message),
     ],
   };
 }
@@ -216,6 +230,7 @@ export function requestChange(
     toSlotId: to.id,
     fromStart: from.start,
     toStart: to.start,
+    message: cleanMessage(message),
     createdAt: ctx.now(),
   };
   const waitingFor = actor.role === "STUDENT" ? "강사 승인" : "레슨생 동의";
@@ -240,9 +255,93 @@ export function requestChange(
         from.threadId,
         `${actor.role === "STUDENT" ? "레슨생이" : "강사가"} 일정 변경을 요청했습니다. ${waitingFor}을 기다리는 중입니다.`,
       ),
-      ...withMessage(ctx, from.threadId, actor, message),
     ],
   };
+}
+
+/**
+ * 강사: 확정된 레슨을 아직 슬롯이 없는 새 시간으로 옮기자고 요청한다.
+ * 새 시간에 빈 슬롯을 열고 그 슬롯으로 변경 요청을 보낸다 (레슨생 동의 필요).
+ * 거절되면 새로 연 슬롯은 빈 슬롯(OPEN)으로 남는다.
+ */
+export function requestChangeToNewTime(
+  state: LessonState,
+  actor: Actor,
+  fromSlotId: string,
+  range: { start: string; end: string },
+  ctx: MachineContext,
+  message?: string,
+): LessonState {
+  if (actor.role !== "INSTRUCTOR")
+    throw new LessonError("FORBIDDEN", "레슨생은 강사가 열어 둔 빈 슬롯으로만 옮길 수 있습니다.");
+  const from = findSlot(state, fromSlotId);
+  if (from.status !== "CONFIRMED")
+    throw new LessonError("INVALID_STATE", "확정된 레슨만 변경 요청할 수 있습니다.");
+  const created = createOpenSlot(state, actor, range, ctx);
+  return requestChange(created.state, actor, fromSlotId, created.slot.id, ctx, message);
+}
+
+/** 드래그 앤 드롭 결과 미리 계산 (화면의 고스트 표시와 실제 처리에 같이 쓴다) */
+export type DropPlan =
+  | { kind: "none" }
+  | { kind: "move"; start: string; end: string }
+  | { kind: "change"; toSlotId: string; start: string; end: string }
+  | { kind: "change-new"; start: string; end: string }
+  | { kind: "invalid"; reason: string; start: string; end: string };
+
+export function planDrop(
+  state: LessonState,
+  actor: Actor,
+  slotId: string,
+  start: string,
+  now: string,
+): DropPlan {
+  const slot = state.slots.find((s) => s.id === slotId);
+  if (!slot) return { kind: "none" };
+  const duration = Date.parse(slot.end) - Date.parse(slot.start);
+  const end = new Date(Date.parse(start) + duration).toISOString();
+  if (Date.parse(start) === Date.parse(slot.start)) return { kind: "none" };
+  const invalid = (reason: string): DropPlan => ({ kind: "invalid", reason, start, end });
+  const others = state.slots.filter((s) => s.id !== slotId);
+
+  if (slot.status === "OPEN") {
+    if (actor.role !== "INSTRUCTOR") return invalid("빈 슬롯은 강사만 옮길 수 있습니다.");
+    if (Date.parse(start) < Date.parse(now)) return invalid("지난 시간으로는 옮길 수 없습니다.");
+    if (others.some((s) => overlaps(s.start, s.end, start, end)))
+      return invalid("다른 레슨/슬롯과 겹칩니다.");
+    return { kind: "move", start, end };
+  }
+
+  const canChange =
+    slot.status === "CONFIRMED" &&
+    !!slot.studentId &&
+    (actor.role === "INSTRUCTOR" || slot.studentId === actor.userId);
+  if (!canChange) {
+    return invalid(
+      slot.status === "CONFIRMED" ? "본인 레슨만 옮길 수 있습니다." : "응답 대기 중인 일정은 옮길 수 없습니다.",
+    );
+  }
+
+  // 놓은 위치에 빈 슬롯이 있으면 그 슬롯으로 변경 요청 (시작 시간이 같은 슬롯 우선)
+  const targets = others
+    .filter((s) => s.status === "OPEN" && overlaps(s.start, s.end, start, end))
+    .sort(
+      (a, b) =>
+        Math.abs(Date.parse(a.start) - Date.parse(start)) -
+        Math.abs(Date.parse(b.start) - Date.parse(start)),
+    );
+  if (targets.length > 0) {
+    const target = targets[0];
+    if (Date.parse(target.start) < Date.parse(now)) return invalid("지난 슬롯으로는 옮길 수 없습니다.");
+    return { kind: "change", toSlotId: target.id, start: target.start, end: target.end };
+  }
+  if (actor.role !== "INSTRUCTOR") return invalid("강사가 열어 둔 빈 슬롯 위에 놓아 주세요.");
+  if (Date.parse(start) < Date.parse(now)) return invalid("지난 시간으로는 옮길 수 없습니다.");
+  if (overlaps(slot.start, slot.end, start, end))
+    return invalid("기존 레슨 시간과 겹치지 않게 옮겨 주세요.");
+  if (others.some((s) => overlaps(s.start, s.end, start, end)))
+    return invalid("다른 레슨/슬롯과 겹칩니다.");
+  return { kind: "change-new", start, end };
 }
 
 /* ------------------------------------------------------------------ */

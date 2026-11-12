@@ -125,6 +125,7 @@ export function createInitialLessonState(now: Date): LessonState {
       requestedBy: "STUDENT",
       toSlotId: "p-s3-fri-18",
       toStart: start("p-s3-fri-18"),
+      message: "콩쿠르 전에 한 번 더 봐주실 수 있을까요?",
       createdAt: ago(20),
     },
     {
@@ -135,6 +136,7 @@ export function createInitialLessonState(now: Date): LessonState {
       requestedBy: "STUDENT",
       toSlotId: "p-s1-sat-14",
       toStart: start("p-s1-sat-14"),
+      message: "지난달 빠진 레슨 보강으로 신청드려요.",
       createdAt: ago(5),
     },
     {
@@ -147,6 +149,7 @@ export function createInitialLessonState(now: Date): LessonState {
       toSlotId: "c-s2-thu-19",
       fromStart: start("l-s2-w2"),
       toStart: start("c-s2-thu-19"),
+      message: "월요일에 학교 행사가 있어서 목요일로 옮기고 싶어요.",
       createdAt: ago(9),
     },
     {
@@ -159,6 +162,7 @@ export function createInitialLessonState(now: Date): LessonState {
       toSlotId: "c-s1-wed-19",
       fromStart: start("l-s1-w2"),
       toStart: start("c-s1-wed-19"),
+      message: "화요일에 오케스트라 리허설이 잡혀서, 수요일 같은 시간 괜찮을까요?",
       createdAt: ago(3),
     },
   ];
@@ -182,13 +186,12 @@ export function createInitialLessonState(now: Date): LessonState {
     comment("t-l-s1-w1", 30, "선생님, 이번 주는 비브라토 연습해 갈게요!", "s1"),
     comment("t-l-s1-w1", 29, "좋아요. 스케일 3옥타브도 같이 봐요 🎻", "t1"),
     comment("t-p-s1-sat-14", 5, "보강 신청이 접수되었습니다. 강사 승인을 기다리는 중입니다."),
-    comment("t-p-s1-sat-14", 5, "지난달 빠진 레슨 보강으로 신청드려요.", "s1"),
+    comment("t-p-s1-sat-14", 4, "보강 때 콩쿠르 곡 1악장 봐주실 수 있나요?", "s1"),
     comment("t-p-s3-fri-18", 20, "보강 신청이 접수되었습니다. 강사 승인을 기다리는 중입니다."),
-    comment("t-p-s3-fri-18", 20, "콩쿠르 전에 한 번 더 봐주실 수 있을까요?", "s3"),
     comment("t-l-s2-w2", 9, "레슨생이 일정 변경을 요청했습니다. 강사 승인을 기다리는 중입니다."),
-    comment("t-l-s2-w2", 9, "월요일에 학교 행사가 있어서 목요일로 옮기고 싶어요.", "s2"),
+    comment("t-l-s2-w2", 8, "목요일 7시면 학원 끝나고 바로 갈 수 있어요.", "s2"),
     comment("t-l-s1-w2", 3, "강사가 일정 변경을 요청했습니다. 레슨생 동의를 기다리는 중입니다."),
-    comment("t-l-s1-w2", 3, "화요일에 오케스트라 리허설이 잡혀서, 수요일 같은 시간 괜찮을까요?", "t1"),
+    comment("t-l-s1-w2", 2, "수요일에 어렵다면 편하게 거절해도 괜찮아요.", "t1"),
   ];
 
   return { slots, requests, comments };

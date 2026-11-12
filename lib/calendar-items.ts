@@ -1,6 +1,6 @@
 "use client";
 
-import { format, isSameDay } from "date-fns";
+import { format, formatDistanceStrict, isSameDay } from "date-fns";
 import { ko } from "date-fns/locale";
 import { useMemo } from "react";
 import { getSlotViews, overlaps } from "@/lib/lesson-machine";
@@ -16,6 +16,9 @@ export const fmtTime = (d: Date | string) => format(new Date(d), "HH:mm");
 export const fmtDay = (d: Date | string) => format(new Date(d), "M월 d일 (EEE)", { locale: ko });
 export const fmtDateTime = (d: Date | string) =>
   format(new Date(d), "M월 d일 (EEE) HH:mm", { locale: ko });
+/** "3시간 전" 형식 */
+export const timeAgo = (iso: string, now: string) =>
+  `${formatDistanceStrict(new Date(iso), new Date(now), { locale: ko })} 전`;
 export const fmtRange = (start: Date | string, end: Date | string) =>
   `${fmtDay(start)} ${fmtTime(start)} – ${fmtTime(end)}`;
 
@@ -119,27 +122,42 @@ export function useItemClick() {
 /* 표시 스타일 / 라벨                                                   */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 레슨 상태는 4가지로만 구분한다 (+ 레슨생 화면의 '마감됨').
+ * - 가능: 비어 있는 테두리만
+ * - 확정: 꽉 찬 고정 색
+ * - 승인 대기: 진한 노랑 + 깜빡이는 표시로 눈에 띄게
+ * - 변경 요청: 움직이는 점선 (기존 시간·희망 시간 모두)
+ */
 export const SLOT_STYLES: Record<SlotDisplay, string> = {
-  OPEN: "border border-dashed border-mint-500 bg-mint-50/80 text-mint-800",
-  CONFIRMED: "border border-mint-600 bg-mint-600 text-white",
-  PENDING_BOOKING: "border border-amber-400 bg-amber-100 text-amber-900",
-  PENDING_CHANGE_FROM: "border border-violet-400 bg-violet-100 text-violet-900",
-  PENDING_CHANGE_TO: "border border-dashed border-violet-500 bg-violet-50 text-violet-900",
+  OPEN: "border border-mint-500 bg-white text-mint-700",
+  CONFIRMED: "border border-mint-700 bg-mint-600 text-white",
+  PENDING_BOOKING: "border-2 border-amber-600 bg-amber-300 text-amber-950 animate-pending",
+  PENDING_CHANGE_FROM: "border-marching bg-violet-100 text-violet-950",
+  PENDING_CHANGE_TO: "border-marching bg-white text-violet-900",
   CLOSED: "border border-zinc-200 bg-closed-stripes text-zinc-500",
 };
 
 export const EXTERNAL_STYLES = {
-  GOOGLE: "border border-blue-200 border-l-4 border-l-blue-500 bg-blue-50 text-blue-900",
-  KAKAO: "border border-coral-200 border-l-4 border-l-coral-500 bg-coral-50 text-coral-800",
+  GOOGLE: "border border-blue-300 border-l-4 border-l-blue-600 bg-blue-50 text-blue-900",
+  KAKAO: "border border-coral-300 border-l-4 border-l-coral-600 bg-coral-50 text-coral-800",
 } as const;
 
+/** 드래그로 옮길 수 있는 일정인가 (빈 슬롯: 강사 / 확정 레슨: 강사 또는 본인) */
+export function canDrag(item: CalendarItem, role: UserRole): boolean {
+  if (item.kind !== "slot" || item.view.masked) return false;
+  if (item.view.display === "OPEN") return role === "INSTRUCTOR";
+  if (item.view.display === "CONFIRMED") return role === "INSTRUCTOR" || item.view.mine;
+  return false;
+}
+
 export const STATUS_LABEL: Record<SlotDisplay, string> = {
-  OPEN: "레슨 가능 (OPEN)",
-  CONFIRMED: "확정 (CONFIRMED)",
-  PENDING_BOOKING: "보강 승인 대기 (PENDING_BOOKING)",
-  PENDING_CHANGE_FROM: "변경 요청 중 · 기존 일정 (PENDING_CHANGE)",
-  PENDING_CHANGE_TO: "변경 요청 중 · 변경 희망 시간 (PENDING_CHANGE)",
-  CLOSED: "마감됨",
+  OPEN: "가능",
+  CONFIRMED: "확정",
+  PENDING_BOOKING: "승인 대기",
+  PENDING_CHANGE_FROM: "변경 요청 · 기존 시간",
+  PENDING_CHANGE_TO: "변경 요청 · 희망 시간",
+  CLOSED: "마감",
 };
 
 /** 달력 배지에 표시할 짧은 제목 */

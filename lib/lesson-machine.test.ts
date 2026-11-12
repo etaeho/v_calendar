@@ -9,9 +9,12 @@ import {
   deleteOpenSlot,
   getSlotViews,
   LessonError,
+  moveOpenSlot,
+  planDrop,
   rejectRequest,
   requestBooking,
   requestChange,
+  requestChangeToNewTime,
   type MachineContext,
 } from "./lesson-machine.ts";
 
@@ -91,7 +94,9 @@ describe("보강 신청 (OPEN → PENDING_BOOKING → CONFIRMED | OPEN)", () => 
     assert.equal(slot(s, "open1").studentId, "s1");
     const req = s.requests[0];
     assert.equal(req.status, "PENDING");
-    assert.equal(s.comments.filter((c) => c.kind === "USER").length, 1);
+    // 요청 메시지는 메신저(댓글)가 아니라 요청에 붙는다
+    assert.equal(req.message, "이 시간 가능할까요?");
+    assert.equal(s.comments.filter((c) => c.kind === "USER").length, 0);
 
     // 신청한 본인이나 다른 레슨생은 승인할 수 없다
     throwsCode(() => approveRequest(s, me, req.id, ctx), "FORBIDDEN");
@@ -151,8 +156,9 @@ describe("일정 변경 (CONFIRMED+OPEN → PENDING_CHANGE → swap | 유지)", 
     assert.equal(slot(s, "open2").status, "CONFIRMED");
     assert.equal(slot(s, "open2").studentId, "s1");
     assert.equal(slot(s, "open2").lessonType, "REGULAR");
-    // 대화는 새 슬롯이 이어받는다
-    assert.ok(s.comments.some((c) => c.threadId === slot(s, "open2").threadId && c.body === "출장이 있어요"));
+    assert.equal(s.requests[0].message, "출장이 있어요");
+    // 대화 스레드는 새 슬롯이 이어받는다
+    assert.equal(slot(s, "open2").threadId, "t-mine");
   });
 
   it("강사 요청은 해당 레슨생의 동의가 필요하다", () => {
@@ -217,5 +223,54 @@ describe("댓글 · 마스킹", () => {
     const teacherViews = getSlotViews(s, teacher);
     assert.ok(teacherViews.every((v) => !v.masked));
     assert.equal(teacherViews.find((v) => v.slot.id === "open1")!.display, "PENDING_BOOKING");
+  });
+});
+
+describe("드래그 앤 드롭", () => {
+  const NOW = at(1, 0);
+
+  it("강사는 빈 슬롯을 겹치지 않는 시간으로 옮길 수 있다", () => {
+    const s = moveOpenSlot(seed(), teacher, "open1", { start: at(5, 13), end: at(5, 14) });
+    assert.equal(slot(s, "open1").start, at(5, 13));
+    assert.equal(slot(s, "open1").threadId, "t-open1");
+    throwsCode(() => moveOpenSlot(seed(), teacher, "open1", { start: at(6, 10), end: at(6, 11) }), "OVERLAP");
+    throwsCode(() => moveOpenSlot(seed(), me, "open1", { start: at(5, 13), end: at(5, 14) }), "FORBIDDEN");
+    throwsCode(() => moveOpenSlot(seed(), teacher, "mine", { start: at(5, 13), end: at(5, 14) }), "INVALID_STATE");
+  });
+
+  it("강사가 확정 레슨을 새 시간으로 옮기면 슬롯이 열리고 레슨생 동의를 기다린다", () => {
+    const ctx = makeCtx();
+    let s = requestChangeToNewTime(seed(), teacher, "mine", { start: at(9, 15), end: at(9, 16) }, ctx, "공연 때문에요");
+    const req = s.requests[0];
+    const target = slot(s, req.toSlotId);
+    assert.equal(target.start, at(9, 15));
+    assert.equal(target.status, "PENDING_CHANGE");
+    assert.equal(req.requestedBy, "INSTRUCTOR");
+    s = approveRequest(s, me, req.id, ctx);
+    assert.equal(slot(s, req.toSlotId).status, "CONFIRMED");
+    assert.equal(slot(s, "mine").status, "OPEN");
+    throwsCode(() => requestChangeToNewTime(seed(), me, "mine", { start: at(9, 15), end: at(9, 16) }, ctx), "FORBIDDEN");
+    throwsCode(() => requestChangeToNewTime(seed(), teacher, "mine", { start: at(8, 10), end: at(8, 11) }, ctx), "OVERLAP");
+  });
+
+  it("planDrop 은 역할과 놓은 위치에 따라 처리 방식을 고른다", () => {
+    const st = seed();
+    assert.equal(planDrop(st, teacher, "open1", at(5, 10), NOW).kind, "none");
+    assert.equal(planDrop(st, teacher, "open1", at(5, 14), NOW).kind, "move");
+    assert.equal(planDrop(st, teacher, "open1", at(6, 10), NOW).kind, "invalid");
+    assert.equal(planDrop(st, me, "open1", at(5, 14), NOW).kind, "invalid");
+
+    // 빈 슬롯 위(30분 어긋나도)에 놓으면 그 슬롯으로 변경 요청
+    const onSlot = planDrop(st, me, "mine", new Date(Date.UTC(2026, 0, 6, 10, 30)).toISOString(), NOW);
+    assert.equal(onSlot.kind, "change");
+    assert.ok(onSlot.kind === "change" && onSlot.toSlotId === "open2" && onSlot.start === at(6, 10));
+
+    // 빈 시간: 레슨생은 불가, 강사는 새 시간 변경 요청
+    assert.equal(planDrop(st, me, "mine", at(9, 15), NOW).kind, "invalid");
+    assert.equal(planDrop(st, teacher, "mine", at(9, 15), NOW).kind, "change-new");
+    assert.equal(planDrop(st, teacher, "mine", at(8, 10), NOW).kind, "invalid");
+    // 남의 레슨, 지난 시간
+    assert.equal(planDrop(st, me, "theirs", at(6, 10), NOW).kind, "invalid");
+    assert.equal(planDrop(st, teacher, "open1", at(1, 0), at(3, 0)).kind, "invalid");
   });
 });

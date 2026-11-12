@@ -1,8 +1,8 @@
 "use client";
 
-import { Check, Loader2, RefreshCw, RotateCcw, X } from "lucide-react";
+import { BellRing, Check, Hourglass, Loader2, RefreshCw, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { fmtDateTime, fmtTime, SLOT_STYLES } from "@/lib/calendar-items";
+import { fmtDateTime, fmtTime, SLOT_STYLES, timeAgo } from "@/lib/calendar-items";
 import { CALENDARS } from "@/lib/calendars";
 import { canCancel, canResolve } from "@/lib/lesson-machine";
 import { userName } from "@/lib/mock-data";
@@ -10,24 +10,27 @@ import { cn } from "@/lib/utils";
 import { actorForRole, syncKey, useCalendarStore } from "@/store/calendar-store";
 import type { ExternalProvider, ScheduleRequest, SlotDisplay, UserRole } from "@/types/calendar";
 
-const LEGEND: { display: SlotDisplay; label: string }[] = [
-  { display: "OPEN", label: "레슨 가능 (빈 슬롯)" },
-  { display: "CONFIRMED", label: "확정된 레슨" },
-  { display: "PENDING_BOOKING", label: "보강 승인 대기" },
-  { display: "PENDING_CHANGE_FROM", label: "변경 요청 중 (기존)" },
-  { display: "PENDING_CHANGE_TO", label: "변경 희망 시간" },
-  { display: "CLOSED", label: "마감됨 (다른 레슨생)" },
+const LEGEND: { display: SlotDisplay; label: string; hint: string }[] = [
+  { display: "OPEN", label: "가능", hint: "신청할 수 있는 빈 시간" },
+  { display: "CONFIRMED", label: "확정", hint: "정규 · 보강 레슨" },
+  { display: "PENDING_BOOKING", label: "승인 대기", hint: "보강 신청 응답 전" },
+  { display: "PENDING_CHANGE_FROM", label: "변경 요청", hint: "기존 · 희망 시간 모두 점선" },
+  { display: "CLOSED", label: "마감", hint: "다른 레슨생 일정" },
 ];
 
 const describe = (r: ScheduleRequest, role: UserRole) => {
   const who = role === "INSTRUCTOR" ? `${userName(r.studentId)} · ` : "";
   return r.kind === "BOOKING"
-    ? `${who}보강 신청 ${fmtDateTime(r.toStart)}`
-    : `${who}변경 ${fmtDateTime(r.fromStart!)} → ${fmtDateTime(r.toStart)}`;
+    ? `${who}${fmtDateTime(r.toStart)}`
+    : `${who}${fmtDateTime(r.fromStart!)} → ${fmtDateTime(r.toStart)}`;
 };
+
+const describeHistory = (r: ScheduleRequest, role: UserRole) =>
+  `${r.kind === "BOOKING" ? "보강 신청" : "변경"} ${describe(r, role)}`;
 
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const role = useCalendarStore((s) => s.role);
+  const now = useCalendarStore((s) => s.now);
   const filters = useCalendarStore((s) => s.filters);
   const sync = useCalendarStore((s) => s.sync);
   const requests = useCalendarStore((s) => s.lesson.requests);
@@ -133,10 +136,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         </section>
 
         <section>
-          <h2 className="mb-2 text-xs font-semibold text-zinc-500">
-            {role === "INSTRUCTOR" ? "승인할 요청" : "내 동의가 필요한 요청"}
+          <h2 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-zinc-500">
+            <BellRing className="size-3.5 text-amber-600" />
+            내 응답이 필요한 요청
             {todo.length > 0 && (
-              <span className="ml-1.5 rounded-full bg-coral-600 px-1.5 py-0.5 text-[11px] text-white">
+              <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[11px] font-bold text-amber-950">
                 {todo.length}
               </span>
             )}
@@ -144,14 +148,17 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           {todo.length === 0 ? (
             <p className="px-2 text-xs text-zinc-500">처리할 요청이 없습니다.</p>
           ) : (
-            <RequestList items={todo} role={role} onPick={goTo} tone="todo" />
+            <RequestList items={todo} role={role} now={now} onPick={goTo} tone="todo" />
           )}
         </section>
 
         {waiting.length > 0 && (
           <section>
-            <h2 className="mb-2 text-xs font-semibold text-zinc-500">응답 대기 중</h2>
-            <RequestList items={waiting} role={role} onPick={goTo} tone="waiting" />
+            <h2 className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-zinc-500">
+              <Hourglass className="size-3.5" />
+              상대방 응답 대기 중
+            </h2>
+            <RequestList items={waiting} role={role} now={now} onPick={goTo} tone="waiting" />
           </section>
         )}
 
@@ -171,7 +178,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   >
                     {r.status === "APPROVED" ? "승인" : r.status === "REJECTED" ? "반려" : "취소"}
                   </span>
-                  {describe(r, role)}
+                  {describeHistory(r, role)}
                   {r.rejectReason && (
                     <p className="mt-1 text-zinc-600">사유: {r.rejectReason}</p>
                   )}
@@ -187,7 +194,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             {LEGEND.filter((l) => role === "STUDENT" || l.display !== "CLOSED").map((l) => (
               <li key={l.display} className="flex items-center gap-2 text-xs text-zinc-700">
                 <span className={cn("h-4 w-7 shrink-0 rounded", SLOT_STYLES[l.display])} />
-                {l.label}
+                <span className="shrink-0 font-medium whitespace-nowrap text-zinc-900">{l.label}</span>
+                <span className="min-w-0 truncate text-zinc-500" title={l.hint}>
+                  {l.hint}
+                </span>
               </li>
             ))}
           </ul>
@@ -210,11 +220,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
 function RequestList({
   items,
   role,
+  now,
   onPick,
   tone,
 }: {
   items: ScheduleRequest[];
   role: UserRole;
+  now: string;
   onPick: (r: ScheduleRequest) => void;
   tone: "todo" | "waiting";
 }) {
@@ -228,10 +240,23 @@ function RequestList({
             className={cn(
               "w-full rounded-lg border px-2.5 py-2 text-left text-xs transition-colors",
               tone === "todo"
-                ? "border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100"
-                : "border-zinc-200 text-zinc-700 hover:bg-zinc-50",
+                ? "border-amber-500 bg-amber-50 text-amber-950 hover:bg-amber-100"
+                : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50",
             )}
           >
+            <span className="mb-1 flex items-center justify-between gap-2">
+              <span
+                className={cn(
+                  "rounded px-1.5 py-0.5 text-[11px] font-semibold",
+                  r.kind === "BOOKING" ? "bg-amber-200 text-amber-950" : "bg-violet-100 text-violet-900",
+                )}
+              >
+                {r.kind === "BOOKING" ? "보강 신청" : "일정 변경"}
+              </span>
+              <span className={cn("text-[11px]", tone === "todo" ? "font-semibold text-amber-800" : "text-zinc-500")}>
+                {tone === "todo" ? "응답 필요" : "대기 중"} · {timeAgo(r.createdAt, now)}
+              </span>
+            </span>
             {describe(r, role)}
           </button>
         </li>

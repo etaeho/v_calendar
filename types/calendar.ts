@@ -71,6 +71,8 @@ export interface ScheduleRequest {
   /** 요청 시점의 시간 스냅샷 (슬롯이 삭제/변경되어도 내역 표시에 사용) */
   fromStart?: string;
   toStart: string;
+  /** 요청과 함께 보낸 메시지 (요청 카드에 표시, 메신저와 분리) */
+  message?: string;
   createdAt: string;
   resolvedAt?: string;
   rejectReason?: string;

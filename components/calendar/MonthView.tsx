@@ -1,15 +1,20 @@
 "use client";
 
 import {
+  addMinutes,
+  differenceInMinutes,
   eachDayOfInterval,
   endOfMonth,
   endOfWeek,
   isSameDay,
   isSameMonth,
+  startOfDay,
   startOfMonth,
   startOfWeek,
 } from "date-fns";
+import { useState } from "react";
 import {
+  canDrag,
   fmtTime,
   itemClass,
   itemsOnDay,
@@ -33,6 +38,9 @@ export function MonthView() {
   const items = useCalendarItems();
   const linked = useLinkedSlotIds();
   const onItemClick = useItemClick();
+  const dropSlot = useCalendarStore((s) => s.dropSlot);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overDay, setOverDay] = useState<string | null>(null);
 
   const month = new Date(cursor);
   const today = new Date(now);
@@ -67,13 +75,34 @@ export function MonthView() {
           const isToday = isSameDay(day, today);
           const selected = drawer.type === "day" && isSameDay(new Date(drawer.date), day);
           const dow = day.getDay();
+          const key = day.toISOString();
           return (
             <div
-              key={day.toISOString()}
+              key={key}
+              onDragOver={(e) => {
+                if (!dragId) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                if (overDay !== key) setOverDay(key);
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setOverDay(null);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const item = items.find((i) => i.id === dragId);
+                setDragId(null);
+                setOverDay(null);
+                if (!item) return;
+                // 다른 날로 옮겨도 시간은 그대로 둔다
+                const minutes = differenceInMinutes(item.start, startOfDay(item.start));
+                dropSlot(item.id, addMinutes(startOfDay(day), minutes));
+              }}
               className={cn(
-                "relative min-w-0 border-r border-b border-zinc-100 p-1",
+                "relative min-w-0 border-r border-b border-zinc-200 p-1",
                 !inMonth && "bg-zinc-50/70",
                 selected && "bg-mint-50",
+                overDay === key && "bg-violet-50 outline-2 -outline-offset-2 outline-violet-500 outline-dashed",
               )}
             >
               <button
@@ -105,11 +134,23 @@ export function MonthView() {
                   <li key={item.id}>
                     <button
                       type="button"
+                      draggable={canDrag(item, role) && !picking}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/plain", item.id);
+                        e.dataTransfer.effectAllowed = "move";
+                        setDragId(item.id);
+                      }}
+                      onDragEnd={() => {
+                        setDragId(null);
+                        setOverDay(null);
+                      }}
                       onClick={() => onItemClick(item)}
                       title={`${fmtTime(item.start)} ${itemTitle(item, role)}`}
                       className={cn(
                         "block w-full truncate rounded px-1 py-px text-left text-[11px] leading-4.5",
                         itemClass(item),
+                        canDrag(item, role) && !picking && "cursor-grab active:cursor-grabbing",
+                        dragId === item.id && "opacity-40",
                         linked.has(item.id) && "ring-2 ring-zinc-900 ring-offset-1",
                         picking &&
                           item.kind === "slot" &&

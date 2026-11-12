@@ -8,9 +8,12 @@ import {
   createOpenSlot,
   deleteOpenSlot,
   LessonError,
+  moveOpenSlot,
+  planDrop,
   rejectRequest,
   requestBooking,
   requestChange,
+  requestChangeToNewTime,
   type MachineContext,
 } from "@/lib/lesson-machine";
 import { createInitialLessonState, INSTRUCTOR, ME_STUDENT } from "@/lib/mock-data";
@@ -31,8 +34,16 @@ export type DrawerState =
   | { type: "day"; date: string }
   | { type: "slot"; slotId: string }
   | { type: "external"; eventId: string }
-  /** 일정 변경 대상 슬롯 선택 모드 */
-  | { type: "reschedule"; fromSlotId: string; toSlotId?: string };
+  /**
+   * 일정 변경 대상 선택 모드.
+   * toSlotId: 기존 빈 슬롯으로 변경 / toRange: (강사 드래그) 슬롯이 없는 새 시간으로 변경
+   */
+  | {
+      type: "reschedule";
+      fromSlotId: string;
+      toSlotId?: string;
+      toRange?: { start: string; end: string };
+    };
 
 export interface SyncState {
   status: "idle" | "syncing" | "synced" | "error";
@@ -81,6 +92,8 @@ interface CalendarStore {
   startReschedule: (fromSlotId: string) => void;
   pickRescheduleTarget: (toSlotId: string) => void;
   submitReschedule: (message?: string) => void;
+  /** 드래그 앤 드롭: 슬롯을 start 시각으로 옮긴다 (planDrop 결과에 따라 이동/변경 요청) */
+  dropSlot: (slotId: string, start: Date) => void;
   approve: (requestId: string) => void;
   reject: (requestId: string, reason?: string) => void;
   cancel: (requestId: string) => void;
@@ -254,18 +267,52 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     pickRescheduleTarget: (toSlotId) => {
       const { drawer } = get();
       if (drawer.type !== "reschedule") return;
-      set({ drawer: { ...drawer, toSlotId } });
+      set({ drawer: { type: "reschedule", fromSlotId: drawer.fromSlotId, toSlotId } });
     },
 
     submitReschedule: (message) => {
       const { drawer } = get();
-      if (drawer.type !== "reschedule" || !drawer.toSlotId) return;
-      const { fromSlotId, toSlotId } = drawer;
+      if (drawer.type !== "reschedule") return;
+      const { fromSlotId, toSlotId, toRange } = drawer;
+      if (!toSlotId && !toRange) return;
       const ok = transition(
-        (s, a) => requestChange(s, a, fromSlotId, toSlotId, ctx, message),
+        (s, a) =>
+          toRange
+            ? requestChangeToNewTime(s, a, fromSlotId, toRange, ctx, message)
+            : requestChange(s, a, fromSlotId, toSlotId!, ctx, message),
         "일정 변경을 요청했습니다. 상대방의 동의를 기다려 주세요.",
       );
       if (ok) set({ drawer: { type: "slot", slotId: fromSlotId } });
+    },
+
+    dropSlot: (slotId, start) => {
+      const { lesson, role, now } = get();
+      const plan = planDrop(lesson, actorForRole(role), slotId, start.toISOString(), now);
+      switch (plan.kind) {
+        case "none":
+          return;
+        case "invalid":
+          toast("error", plan.reason);
+          return;
+        case "move":
+          if (transition((s, a) => moveOpenSlot(s, a, slotId, plan), "빈 슬롯을 옮겼습니다.")) {
+            set({ drawer: { type: "slot", slotId } });
+          }
+          return;
+        case "change":
+          // 바로 보내지 않고 확인 화면(사유 입력)을 연다
+          set({ drawer: { type: "reschedule", fromSlotId: slotId, toSlotId: plan.toSlotId } });
+          return;
+        case "change-new":
+          set({
+            drawer: {
+              type: "reschedule",
+              fromSlotId: slotId,
+              toRange: { start: plan.start, end: plan.end },
+            },
+          });
+          return;
+      }
     },
 
     approve: (requestId) => {
