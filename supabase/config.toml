@@ -1,0 +1,19 @@
+# Supabase CLI 설정 (최소). 자세한 설정은 docs/SETUP-SUPABASE.md
+project_id = "v_calendar"
+
+[auth]
+site_url = "https://etaeho.github.io/v_calendar/"
+additional_redirect_urls = ["http://localhost:3000", "http://localhost:3000/"]
+
+# 두 함수 모두 게이트웨이 JWT 검사를 끄고 코드 안에서 직접 인증한다.
+#  - lesson-api: Authorization 의 사용자 토큰을 supabase.auth.getUser() 로 확인 (CORS preflight 도 통과해야 함)
+#  - notify-dispatch: x-dispatch-secret 헤더를 DISPATCH_SECRET 시크릿과 비교
+[functions.lesson-api]
+verify_jwt = false
+
+[functions.notify-dispatch]
+verify_jwt = false
+
+# 카카오 캘린더 연동용 인가 코드 교환 (다른 작업에서 추가된 함수 — 자체 문서 참고)
+[functions.kakao-oauth]
+verify_jwt = false

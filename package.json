@@ -10,7 +10,8 @@
     "test": "node --test \"lib/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "build:preview": "node scripts/build-preview.mjs",
-    "holidays": "node scripts/fetch-holidays.mjs"
+    "holidays": "node scripts/fetch-holidays.mjs",
+    "supabase:shared": "node scripts/sync-supabase-shared.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",
