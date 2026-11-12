@@ -267,6 +267,56 @@ export function requestBooking(
   };
 }
 
+/**
+ * 강사: 레슨생에게 보강 시간을 제안한다 (레슨생 관리의 '남은 보강'에서).
+ * 빈 슬롯이 승인 대기 상태가 되고, 레슨생이 동의하면 보강 레슨으로 확정된다.
+ */
+export function proposeMakeup(
+  state: LessonState,
+  actor: Actor,
+  slotId: string,
+  studentId: string,
+  ctx: MachineContext,
+  message?: string,
+): LessonState {
+  if (actor.role !== "INSTRUCTOR")
+    throw new LessonError("FORBIDDEN", "보강 제안은 강사만 할 수 있습니다.");
+  const slot = findSlot(state, slotId);
+  if (slot.status !== "OPEN") throw new LessonError("INVALID_STATE", "이미 마감된 슬롯입니다.");
+  if (isPast(slot.start, ctx)) throw new LessonError("INVALID_STATE", "지난 시간에는 보강을 잡을 수 없습니다.");
+  const clash = state.slots.find(
+    (s) =>
+      s.studentId === studentId &&
+      s.status !== "SKIPPED" &&
+      s.id !== slot.id &&
+      overlaps(s.start, s.end, slot.start, slot.end),
+  );
+  if (clash) throw new LessonError("OVERLAP", "이 레슨생의 다른 레슨과 시간이 겹칩니다.");
+
+  const request: ScheduleRequest = {
+    id: ctx.id("req"),
+    kind: "BOOKING",
+    status: "PENDING",
+    studentId,
+    requestedBy: "INSTRUCTOR",
+    toSlotId: slot.id,
+    toStart: slot.start,
+    message: cleanMessage(message),
+    createdAt: ctx.now(),
+  };
+  return {
+    ...state,
+    slots: replaceSlots(state, [
+      { ...slot, status: "PENDING_BOOKING", studentId, lessonType: "MAKEUP", requestId: request.id },
+    ]),
+    requests: [...state.requests, request],
+    comments: [
+      ...state.comments,
+      systemComment(ctx, slot.threadId, "강사가 보강 시간을 제안했습니다. 레슨생 동의를 기다리는 중입니다."),
+    ],
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* 강사/레슨생: 일정 변경 요청                                          */
 /* ------------------------------------------------------------------ */
@@ -574,7 +624,9 @@ export function approveRequest(
         ctx,
         confirmed.threadId,
         request.kind === "BOOKING"
-          ? `${who} 보강 신청을 승인했습니다. 레슨이 확정되었습니다.`
+          ? actor.role === "STUDENT"
+            ? "레슨생이 보강 일정에 동의했습니다. 레슨이 확정되었습니다."
+            : `${who} 보강 신청을 승인했습니다. 레슨이 확정되었습니다.`
           : actor.role === "STUDENT"
             ? "레슨생이 일정 변경에 동의했습니다. 새 시간으로 확정되었습니다."
             : `${who} 일정 변경을 승인했습니다. 새 시간으로 확정되었습니다.`,

@@ -13,6 +13,7 @@ import {
   planDrop,
   adjustMakeup,
   proposeDefer,
+  proposeMakeup,
   proposeHoliday,
   rejectRequest,
   requestBooking,
@@ -49,7 +50,8 @@ import type {
 
 export type DrawerState =
   | { type: "closed" }
-  | { type: "day"; date: string }
+  /** time: 시간대를 눌러 연 경우 그 시각("HH:mm")으로 슬롯 열기 폼을 채운다 */
+  | { type: "day"; date: string; time?: string }
   | { type: "slot"; slotId: string }
   | { type: "external"; eventId: string }
   /**
@@ -84,6 +86,9 @@ interface CalendarStore {
   view: CalendarViewMode;
   /** 현재 보고 있는 기준 날짜 (ISO) */
   cursor: string;
+  /** 휴대폰 월간 화면에서 선택한 날 (그 날 일정 목록을 아래에 보여 준다) */
+  selectedDate: string;
+  selectDate: (date: Date) => void;
   filters: Record<CalendarCategory, boolean>;
   lesson: LessonState;
   externalEvents: ExternalEvent[];
@@ -124,6 +129,8 @@ interface CalendarStore {
   setFocusStudent: (studentId: string | null) => void;
   /** 정규 레슨을 보강으로 미루기 요청 */
   proposeDefer: (slotId: string, message?: string) => void;
+  /** 강사: 레슨생에게 보강 시간 제안 (레슨생 동의 필요) */
+  proposeMakeup: (slotId: string, studentId: string, message?: string) => boolean;
   /** 강사: 보강 필요 횟수 조정 */
   adjustMakeup: (studentId: string, delta: number, reason: string) => boolean;
   /** 공휴일 레슨: 그대로 진행 / 휴강 제안 */
@@ -258,6 +265,8 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     studentId: STUDENTS[0].id,
     view: "week",
     cursor: "",
+    selectedDate: "",
+    selectDate: (date) => set({ selectedDate: date.toISOString(), cursor: date.toISOString() }),
     filters: { LESSON: true, GOOGLE: true, KAKAO: true },
     lesson: emptyLesson,
     externalEvents: [],
@@ -272,6 +281,7 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
         initialized: true,
         now: now.toISOString(),
         cursor: now.toISOString(),
+        selectedDate: now.toISOString(),
         lesson: settle(createInitialLessonState(now, holidayLookup), ctx),
       });
     },
@@ -295,6 +305,7 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
         sync: {},
         drawer: { type: "closed" },
         cursor: now.toISOString(),
+        selectedDate: now.toISOString(),
       });
       toast("info", "데모 데이터를 초기 상태로 되돌렸습니다.");
     },
@@ -303,7 +314,12 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       const { drawer } = get();
       // 선택 모드·개인 일정 상세는 역할이 바뀌면 의미가 없으므로 닫는다
       const keep = drawer.type === "slot" || drawer.type === "day";
-      const view = role === "STUDENT" && get().view === "students" ? "week" : get().view;
+      const current = get().view;
+      // 역할에 없는 화면이면 달력으로 돌아간다 (레슨생 관리 = 강사 전용, 내 수강 = 레슨생 전용)
+      const view =
+        (role === "STUDENT" && current === "students") || (role === "INSTRUCTOR" && current === "plan")
+          ? "month"
+          : current;
       set({
         role,
         view,
@@ -315,7 +331,7 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     setStudent: (studentId) => {
       const { drawer } = get();
       const keep = drawer.type === "slot" || drawer.type === "day";
-      const view = get().view === "students" ? "week" : get().view;
+      const view = get().view === "students" ? "month" : get().view;
       set({
         studentId,
         role: "STUDENT",
@@ -468,7 +484,9 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
               ? "동의했습니다. 이 날 레슨은 쉽니다(휴강)."
               : "동의했습니다. 공휴일이지만 레슨을 진행합니다."
             : get().role === "STUDENT"
-              ? "동의했습니다. 새 시간으로 레슨이 확정되었습니다."
+              ? request?.kind === "BOOKING"
+                ? "동의했습니다. 보강 레슨이 확정되었습니다."
+                : "동의했습니다. 새 시간으로 레슨이 확정되었습니다."
               : "승인했습니다. 레슨이 확정되었습니다.",
       );
       if (ok && request && request.kind !== "HOLIDAY" && request.kind !== "DEFER") {
@@ -521,6 +539,12 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
         "보강으로 미루기를 요청했습니다. 상대방의 동의를 기다려 주세요.",
       );
     },
+
+    proposeMakeup: (slotId, studentId, message) =>
+      transition(
+        (s, a) => proposeMakeup(s, a, slotId, studentId, ctx, message),
+        "보강 시간을 제안했습니다. 레슨생의 동의를 기다려 주세요.",
+      ),
 
     adjustMakeup: (studentId, delta, reason) =>
       transition(

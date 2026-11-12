@@ -57,6 +57,7 @@ import {
 } from "@/lib/lesson-machine";
 import { INSTRUCTOR, userName } from "@/lib/mock-data";
 import { studentColor } from "@/lib/student-colors";
+import { useIsMobile } from "@/lib/use-mobile";
 import { cn } from "@/lib/utils";
 import { useActor, useCalendarStore } from "@/store/calendar-store";
 import type {
@@ -72,6 +73,7 @@ export function Drawer() {
   // 테스트베드에서 사용자를 바꾸면 입력 중이던 내용이 다음 사용자에게 남지 않도록 사용자별로 새로 그린다
   const { userId } = useActor();
   const close = useCalendarStore((s) => s.closeDrawer);
+  const mobile = useIsMobile();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
@@ -83,7 +85,9 @@ export function Drawer() {
   let body: ReactNode = null;
   if (drawer.type === "day") {
     title = fmtDay(drawer.date);
-    body = <DayPanel key={`${drawer.date}-${userId}`} date={drawer.date} />;
+    body = (
+      <DayPanel key={`${drawer.date}-${drawer.time}-${userId}`} date={drawer.date} time={drawer.time} />
+    );
   } else if (drawer.type === "slot") {
     title = "레슨 일정";
     body = <SlotPanel key={`${drawer.slotId}-${userId}`} slotId={drawer.slotId} />;
@@ -99,6 +103,35 @@ export function Drawer() {
         toSlotId={drawer.toSlotId}
         toRange={drawer.toRange}
       />
+    );
+  }
+
+  // 휴대폰: 아래에서 올라오는 시트 / PC: 오른쪽 패널
+  if (mobile) {
+    return (
+      <>
+        <button
+          type="button"
+          aria-label="닫기"
+          className="fixed inset-0 z-40 animate-toast-in bg-black/35"
+          onClick={close}
+        />
+        <aside
+          aria-label={title}
+          className="fixed inset-x-0 bottom-0 z-50 flex max-h-[88dvh] min-h-[45dvh] animate-sheet-up flex-col rounded-t-2xl bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl"
+        >
+          <div className="flex justify-center pt-2" aria-hidden>
+            <span className="h-1 w-10 rounded-full bg-zinc-300" />
+          </div>
+          <div className="flex items-center justify-between border-b border-zinc-200 px-4 pb-2">
+            <h2 className="text-base font-bold">{title}</h2>
+            <Button variant="ghost" size="icon" className="size-10" aria-label="닫기" onClick={close}>
+              <X />
+            </Button>
+          </div>
+          {body}
+        </aside>
+      </>
     );
   }
 
@@ -122,15 +155,23 @@ export function Drawer() {
 /* 날짜 상세                                                            */
 /* ------------------------------------------------------------------ */
 
-function DayPanel({ date }: { date: string }) {
+/** "19:15" + 60분 → "20:15" (자정을 넘기지 않게) */
+const plusMinutes = (hhmm: string, minutes: number) => {
+  const [h, m] = hhmm.split(":").map(Number);
+  const total = Math.min(h * 60 + m + minutes, 23 * 60 + 59);
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+};
+
+function DayPanel({ date, time }: { date: string; time?: string }) {
   const role = useCalendarStore((s) => s.role);
   const now = useCalendarStore((s) => s.now);
   const createSlot = useCalendarStore((s) => s.createSlot);
   const openDrawer = useCalendarStore((s) => s.openDrawer);
   const items = itemsOnDay(useCalendarItems(), new Date(date));
   const onItemClick = useItemClick();
-  const [start, setStart] = useState("18:00");
-  const [end, setEnd] = useState("19:00");
+  // 시간대를 눌러 열었으면 그 시각부터 60분으로 채운다
+  const [start, setStart] = useState(time ?? "18:00");
+  const [end, setEnd] = useState(plusMinutes(time ?? "18:00", 60));
 
   const submit = () => {
     const base = startOfDay(new Date(date));
@@ -201,7 +242,7 @@ function DayPanel({ date }: { date: string }) {
               시작
               <input
                 type="time"
-                step={1800}
+                step={900}
                 value={start}
                 onChange={(e) => setStart(e.target.value)}
                 className="mt-1 block h-9 w-full rounded-lg border border-zinc-300 bg-white px-2 text-sm text-zinc-900"
@@ -211,7 +252,7 @@ function DayPanel({ date }: { date: string }) {
               종료
               <input
                 type="time"
-                step={1800}
+                step={900}
                 value={end}
                 onChange={(e) => setEnd(e.target.value)}
                 className="mt-1 block h-9 w-full rounded-lg border border-zinc-300 bg-white px-2 text-sm text-zinc-900"

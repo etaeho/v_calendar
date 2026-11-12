@@ -26,6 +26,8 @@ import {
   makeupSummary,
   proposeDefer,
   proposeHoliday,
+  proposeMakeup,
+  rejectRequest,
   getSlotViews,
   LessonError,
   planDrop,
@@ -427,5 +429,39 @@ describe("검증 QA 수정 사항", () => {
       .filter((v) => new Date(v.slot.start).getMonth() === 10 && v.seq)
       .map((v) => `${v.seq!.n}/${v.seq!.total}`);
     assert.deepEqual(nov, ["1/2", "2/2", "1/2", "2/2"]);
+  });
+});
+
+describe("강사의 보강 제안", () => {
+  it("강사가 빈 슬롯으로 보강을 제안하고 레슨생이 동의하면 확정된다", () => {
+    const ctx = makeCtx();
+    let st = registerEnrollment(empty(), teacher, input(), regCtx(), noHoliday).state;
+    st = adjustMakeup(st, teacher, "s1", 1, "결석", ctx);
+    st = createOpenSlot(st, teacher, { start: local(2026, 11, 20, 15), end: local(2026, 11, 20, 16) }, ctx).state;
+    const open = st.slots.find((s) => s.status === "OPEN")!.id;
+    throwsCode(() => proposeMakeup(st, s1, open, "s1", ctx), "FORBIDDEN");
+
+    let p = proposeMakeup(st, teacher, open, "s1", ctx, "금요일 3시 어때요?");
+    const req = p.requests.at(-1)!;
+    assert.equal(req.requestedBy, "INSTRUCTOR");
+    assert.equal(makeupSummary(p, "s1", NOW).requested, 1);
+    throwsCode(() => approveRequest(p, teacher, req.id, ctx), "FORBIDDEN");
+    throwsCode(() => approveRequest(p, s2, req.id, ctx), "FORBIDDEN");
+    const ok = approveRequest(p, s1, req.id, ctx);
+    assert.equal(ok.slots.find((s) => s.id === open)!.status, "CONFIRMED");
+    assert.equal(makeupSummary(ok, "s1", NOW).remaining, 0);
+
+    p = rejectRequest(p, s1, req.id, ctx, "그날은 어려워요");
+    assert.equal(p.slots.find((s) => s.id === open)!.status, "OPEN");
+  });
+
+  it("레슨생의 다른 레슨과 겹치는 시간은 제안할 수 없다", () => {
+    const ctx = makeCtx();
+    let st = registerEnrollment(empty(), teacher, input(), regCtx(), noHoliday).state;
+    // 정규 레슨 11/17 19:00 바로 다음 30분과 겹치는 빈 슬롯
+    st = createOpenSlot(st, teacher, { start: local(2026, 11, 17, 20), end: local(2026, 11, 17, 21) }, ctx).state;
+    const open = st.slots.find((s) => s.status === "OPEN")!.id;
+    const shifted = { ...st, slots: st.slots.map((s) => (s.id === open ? { ...s, start: local(2026, 11, 17, 19, 30) } : s)) };
+    throwsCode(() => proposeMakeup(shifted, teacher, open, "s1", ctx), "OVERLAP");
   });
 });

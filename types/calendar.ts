@@ -209,4 +209,8 @@ export interface SlotView {
   seq?: { n: number; total: number };
 }
 
-export type CalendarViewMode = "month" | "week" | "students";
+/**
+ * 화면 모드. requests / menu / plan 은 휴대폰 하단 탭 전용 화면
+ * (PC 에서는 같은 내용이 왼쪽 사이드바에 항상 보인다)
+ */
+export type CalendarViewMode = "month" | "week" | "students" | "requests" | "menu" | "plan";

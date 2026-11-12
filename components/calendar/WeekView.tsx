@@ -19,6 +19,7 @@ import {
 import { mainHoliday } from "@/lib/holidays";
 import { planDrop, type DropPlan } from "@/lib/lesson-machine";
 import { cn } from "@/lib/utils";
+import { useIsMobile } from "@/lib/use-mobile";
 import { useActor, useCalendarStore } from "@/store/calendar-store";
 
 const HOUR_START = 7;
@@ -148,6 +149,7 @@ export function WeekView() {
     scrollRef.current?.scrollTo({ top: minToPx((9 - HOUR_START) * 60) - 8 });
   }, []);
 
+  const mobile = useIsMobile();
   const todayIndex = new Date(now).getDay();
   const showsToday = isSameDay(startOfWeek(new Date(cursor), { weekStartsOn: 0 }), startOfWeek(new Date(now), { weekStartsOn: 0 }));
   useEffect(() => {
@@ -158,8 +160,15 @@ export function WeekView() {
     el.scrollTo({ left: Math.max(0, col.offsetLeft - 56) });
   }, [cursor, showsToday, todayIndex]);
 
+  // 휴대폰: 기준일부터 3일 (가로 스크롤 없이 글자가 읽히는 폭) / PC: 일~토 7일
   const weekStart = startOfWeek(new Date(cursor), { weekStartsOn: 0 });
-  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const days = mobile
+    ? Array.from({ length: 3 }, (_, i) => addDays(startOfDay(new Date(cursor)), i))
+    : Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const gridCols = { gridTemplateColumns: `${mobile ? "2.75rem" : "3.5rem"} repeat(${days.length}, minmax(0, 1fr))` };
+  // PC: 마우스를 올린 시간대에 '여기서부터 슬롯' 미리 보기
+  const [hover, setHover] = useState<{ dayIndex: number; min: number } | null>(null);
+  const lastPointer = useRef<string>("mouse");
   const today = new Date(now);
   const nowMin = minutesFromDayStart(today);
   const picking = drawer.type === "reschedule";
@@ -176,13 +185,25 @@ export function WeekView() {
   };
 
   const onColumnPointerDown = (dayIndex: number) => (e: PointerEvent<HTMLDivElement>) => {
+    lastPointer.current = e.pointerType;
+    // 터치는 스크롤을 우선한다 (탭은 onClick 에서 처리)
+    if (e.pointerType === "touch") return;
     if (!canCreate || e.button !== 0 || e.target !== e.currentTarget) return;
+    setHover(null);
     e.currentTarget.setPointerCapture(e.pointerId);
     const min = minuteAt(e);
     setCreate({ dayIndex, anchor: min, current: min });
   };
-  const onColumnPointerMove = (e: PointerEvent<HTMLDivElement>) => {
-    if (!create) return;
+  const onColumnPointerMove = (dayIndex: number) => (e: PointerEvent<HTMLDivElement>) => {
+    if (!create) {
+      if (e.pointerType === "mouse" && canCreate && !move && e.target === e.currentTarget) {
+        const min = minuteAt(e);
+        if (hover?.dayIndex !== dayIndex || hover.min !== min) setHover({ dayIndex, min });
+      } else if (hover && e.target !== e.currentTarget) {
+        setHover(null);
+      }
+      return;
+    }
     const min = minuteAt(e);
     if (min !== create.current) setCreate({ ...create, current: min });
   };
@@ -193,6 +214,20 @@ export function WeekView() {
     setCreate(null);
     const id = createSlot(addMinutes(base, start), addMinutes(base, end));
     if (id) openDrawer({ type: "slot", slotId: id });
+  };
+
+  /** 휴대폰: 빈 시간대를 탭하면 그 시각(15분 단위)으로 채운 '슬롯 열기'를 연다 */
+  const onColumnClick = (dayIndex: number) => (e: React.MouseEvent<HTMLDivElement>) => {
+    if (lastPointer.current !== "touch" || e.target !== e.currentTarget) return;
+    const y = e.clientY - e.currentTarget.getBoundingClientRect().top;
+    const min = Math.min(Math.max(Math.floor(((y / HOUR_PX) * 60) / SNAP_MIN) * SNAP_MIN, 0), TOTAL_MIN - 60);
+    const total = HOUR_START * 60 + min;
+    const time = `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+    openDrawer({
+      type: "day",
+      date: days[dayIndex].toISOString(),
+      time: role === "INSTRUCTOR" && canCreate ? time : undefined,
+    });
   };
 
   /* ---------------- 일정 드래그 → 이동 ---------------- */
@@ -276,10 +311,11 @@ export function WeekView() {
 
   return (
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
-      <div className="min-w-[720px]">
-        <div className="sticky top-0 z-20 grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] border-b border-zinc-300 bg-white">
+      <div className={mobile ? undefined : "min-w-[720px]"}>
+        <div className="sticky top-0 z-30 grid border-b border-zinc-300 bg-white" style={gridCols}>
           <div className="sticky left-0 z-10 bg-white" />
-          {days.map((day, i) => {
+          {days.map((day) => {
+            const i = day.getDay();
             const isToday = isSameDay(day, today);
             const holiday = mainHoliday(day);
             const red = i === 0 || holiday?.dayOff;
@@ -324,7 +360,7 @@ export function WeekView() {
           })}
         </div>
 
-        <div className="grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))]">
+        <div className="grid" style={gridCols}>
           <div className="sticky left-0 z-20 bg-white" style={{ height: minToPx(TOTAL_MIN) }}>
             {HOURS.map((h, i) => (
               <span
@@ -352,7 +388,9 @@ export function WeekView() {
                   columnsRef.current[dayIndex] = el;
                 }}
                 onPointerDown={onColumnPointerDown(dayIndex)}
-                onPointerMove={onColumnPointerMove}
+                onPointerMove={onColumnPointerMove(dayIndex)}
+                onPointerLeave={() => setHover(null)}
+                onClick={onColumnClick(dayIndex)}
                 onPointerUp={onColumnPointerUp}
                 onPointerCancel={() => setCreate(null)}
                 className={cn(
@@ -428,6 +466,18 @@ export function WeekView() {
                   );
                 })}
 
+                {hover?.dayIndex === dayIndex && !createPreview && !move && (
+                  <div
+                    className="pointer-events-none absolute inset-x-0.5 z-0 rounded-md border border-dashed border-mint-500 bg-mint-50/70 px-1.5 py-0.5 text-[11px] font-semibold text-mint-800"
+                    style={{
+                      top: minToPx(createRange({ dayIndex, anchor: hover.min, current: hover.min }).start),
+                      height: minToPx(60),
+                    }}
+                  >
+                    {fmtMin(createRange({ dayIndex, anchor: hover.min, current: hover.min }).start)}부터 60분
+                  </div>
+                )}
+
                 {createPreview && (
                   <div
                     className="pointer-events-none absolute inset-x-0.5 rounded-md border-2 border-dashed border-mint-600 bg-mint-200/60 px-1.5 py-0.5 text-xs font-semibold text-mint-800"
@@ -493,10 +543,18 @@ export function WeekView() {
       </div>
       {lessonFilter && !picking && (
         <p className="sticky bottom-0 left-0 border-t border-zinc-200 bg-white/95 px-4 py-1.5 text-xs text-zinc-600">
-          {role === "INSTRUCTOR" ? (
+          {mobile ? (
+            role === "INSTRUCTOR" ? (
+              <>
+                빈 시간대를 <strong>탭</strong>하면 그 시각부터 슬롯을 열 수 있어요 · 일정은 눌러서 변경
+              </>
+            ) : (
+              <>일정을 눌러 보강 신청 · 일정 변경 요청</>
+            )
+          ) : role === "INSTRUCTOR" ? (
             <>
-              빈 시간대를 <strong>클릭</strong>(60분)하거나 <strong>드래그</strong>해 슬롯 열기 · 일정을{" "}
-              <strong>끌어서</strong> 15분 단위로 옮기기
+              빈 시간대를 <strong>클릭</strong>(그 시각부터 60분)하거나 <strong>드래그</strong>해 슬롯 열기 ·
+              일정을 <strong>끌어서</strong> 15분 단위로 옮기기
             </>
           ) : (
             <>

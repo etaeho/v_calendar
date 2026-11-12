@@ -27,6 +27,18 @@
   --animate-slide-in: slide-in 0.2s ease-out;
   --animate-toast-in: toast-in 0.2s ease-out;
   --animate-pending: pending 1.6s ease-in-out infinite;
+  --animate-sheet-up: sheet-up 0.22s ease-out;
+
+  @keyframes sheet-up {
+    from {
+      transform: translateY(40px);
+      opacity: 0.6;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
 
   /* filter 로 깜빡여 box-shadow(레슨생 색 띠)를 덮어쓰지 않는다 */
   @keyframes pending {

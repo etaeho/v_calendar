@@ -4,7 +4,7 @@ import { addDays, addMonths, endOfMonth } from "date-fns";
 import { AlertTriangle, CalendarPlus, Pencil, Plus, Trash2, UserPlus, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { fmtDateTime, fmtDay, won } from "@/lib/calendar-items";
+import { fmtDateTime, fmtDay, fmtTime, won } from "@/lib/calendar-items";
 import {
   changeEnrollmentSchedule,
   countLessonsAfter,
@@ -775,6 +775,7 @@ function MakeupPanel({ student }: { student: User }) {
   const store = useCalendarStore.getState;
   const [adjust, setAdjust] = useState<1 | -1 | null>(null);
   const [reason, setReason] = useState("");
+  const [picking, setPicking] = useState(false);
   const m = makeupSummary(lesson, student.id, now);
   const uid = `adj-${student.id}`;
 
@@ -782,17 +783,23 @@ function MakeupPanel({ student }: { student: User }) {
     <section aria-label={`${student.name} 보강`} className="mt-3 border-t border-zinc-100 pt-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-semibold">보강</h4>
-        <p className="text-sm tabular-nums">
-          <span
-            className={cn(
-              "rounded-full px-2 py-0.5 font-semibold",
-              m.remaining > 0 ? "bg-orange-100 text-orange-900" : "bg-zinc-100 text-zinc-700",
-            )}
-          >
-            {m.remaining >= 0 ? `남은 보강 ${m.remaining}회` : `추가 레슨 ${-m.remaining}회`}
-          </span>
-        </p>
+        <button
+          type="button"
+          aria-expanded={picking}
+          onClick={() => setPicking((v) => !v)}
+          className={cn(
+            "flex min-h-9 items-center gap-1 rounded-full px-3 text-sm font-semibold tabular-nums",
+            m.remaining > 0
+              ? "bg-orange-100 text-orange-900 hover:bg-orange-200"
+              : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200",
+          )}
+        >
+          {m.remaining >= 0 ? `남은 보강 ${m.remaining}회` : `추가 레슨 ${-m.remaining}회`}
+          <CalendarPlus className="size-4" />
+          <span className="sr-only">· 보강 잡기</span>
+        </button>
       </div>
+      {picking && <MakeupPicker student={student} remaining={m.remaining} onDone={() => setPicking(false)} />}
       <p className="mt-1 text-xs text-zinc-600 tabular-nums">
         필요 {m.owed} · 완료 {m.done} · 예정 {m.scheduled}
         {m.requested > 0 && ` · 신청 중 ${m.requested}`}
@@ -861,5 +868,93 @@ function MakeupPanel({ student }: { student: User }) {
         </form>
       )}
     </section>
+  );
+}
+
+/** 남은 보강을 누르면: 강사가 열어 둔 빈 시간 중에서 골라 레슨생에게 보강을 제안한다 */
+function MakeupPicker({
+  student,
+  remaining,
+  onDone,
+}: {
+  student: User;
+  remaining: number;
+  onDone: () => void;
+}) {
+  const lesson = useCalendarStore((s) => s.lesson);
+  const now = useCalendarStore((s) => s.now);
+  const store = useCalendarStore.getState;
+  const [slotId, setSlotId] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const mine = lesson.slots.filter((s) => s.studentId === student.id && s.status !== "SKIPPED");
+  const open = lesson.slots
+    .filter((s) => s.status === "OPEN" && s.start > now)
+    .sort((a, b) => a.start.localeCompare(b.start))
+    .slice(0, 20);
+  const clashes = (start: string, end: string) =>
+    mine.some((x) => Date.parse(x.start) < Date.parse(end) && Date.parse(start) < Date.parse(x.end));
+
+  return (
+    <form
+      aria-label={`${student.name} 보강 잡기`}
+      className="mt-2 space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (slotId && store().proposeMakeup(slotId, student.id, message)) onDone();
+      }}
+    >
+      <p className="text-xs text-emerald-950">
+        열어 둔 빈 시간 중에서 고르면 <strong>{student.name}</strong>에게 보강을 제안합니다. 레슨생이 동의하면
+        확정됩니다.
+        {remaining <= 0 && " (남은 보강이 없어 추가 레슨이 됩니다)"}
+      </p>
+      {open.length === 0 ? (
+        <p className="rounded-lg bg-white px-3 py-3 text-xs text-zinc-600">
+          열어 둔 빈 시간이 없습니다. 달력에서 시간대를 눌러 빈 슬롯을 먼저 열어 주세요.
+        </p>
+      ) : (
+        <ul className="max-h-64 space-y-1 overflow-y-auto">
+          {open.map((s) => {
+            const clash = clashes(s.start, s.end);
+            return (
+              <li key={s.id}>
+                <label
+                  className={cn(
+                    "flex min-h-10 items-center gap-2.5 rounded-lg border bg-white px-3 py-1.5 text-sm",
+                    slotId === s.id ? "border-emerald-600" : "border-zinc-200",
+                    clash ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-zinc-50",
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name={`makeup-${student.id}`}
+                    className="size-4 accent-emerald-600"
+                    disabled={clash}
+                    checked={slotId === s.id}
+                    onChange={() => setSlotId(s.id)}
+                  />
+                  <span className="tabular-nums">
+                    {fmtDateTime(s.start)}–{fmtTime(s.end)}
+                  </span>
+                  {clash && <span className="ml-auto text-xs text-zinc-500">레슨과 겹침</span>}
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <input
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        placeholder="함께 전할 메시지 (선택)"
+        aria-label="보강 제안 메시지"
+        className={inputCls}
+      />
+      <FormActions onCancel={onDone}>
+        <Button type="submit" variant="primary" size="sm" disabled={!slotId}>
+          보강 제안 보내기
+        </Button>
+      </FormActions>
+    </form>
   );
 }

@@ -25,7 +25,9 @@ import {
   useItemClick,
   useLinkedSlotIds,
 } from "@/lib/calendar-items";
+import { MobileMonthView } from "@/components/calendar/MobileMonthView";
 import { mainHoliday } from "@/lib/holidays";
+import { useIsMobile } from "@/lib/use-mobile";
 import { planDrop } from "@/lib/lesson-machine";
 import { cn } from "@/lib/utils";
 import { useActor, useCalendarStore } from "@/store/calendar-store";
@@ -34,6 +36,10 @@ export const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const MAX_CHIPS = 3;
 
 export function MonthView() {
+  return useIsMobile() ? <MobileMonthView /> : <DesktopMonthView />;
+}
+
+function DesktopMonthView() {
   const cursor = useCalendarStore((s) => s.cursor);
   const now = useCalendarStore((s) => s.now);
   const role = useCalendarStore((s) => s.role);
@@ -120,6 +126,10 @@ export function MonthView() {
               className={cn(
                 "relative min-w-0 border-r border-b border-zinc-200 p-1",
                 !inMonth && "bg-zinc-50/70",
+                role === "STUDENT" &&
+                  dayItems.some((i) => i.kind === "slot" && i.view.display === "OPEN") &&
+                  !selected &&
+                  "bg-emerald-50/70",
                 selected && "bg-mint-50",
                 overDay === key &&
                   (overPlan?.kind === "invalid"

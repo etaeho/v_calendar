@@ -38,9 +38,34 @@ const PALETTE: StudentColor[] = [
     stripe: "shadow-[inset_4px_0_0_#94466f]",
     dot: "bg-[#94466f]",
   },
+  {
+    fill: "border-[#654210] bg-[#8a5a14] text-white",
+    stripe: "shadow-[inset_4px_0_0_#8a5a14]",
+    dot: "bg-[#8a5a14]",
+  },
+  {
+    fill: "border-[#7a2a38] bg-[#a33a4c] text-white",
+    stripe: "shadow-[inset_4px_0_0_#a33a4c]",
+    dot: "bg-[#a33a4c]",
+  },
+  {
+    fill: "border-[#204a30] bg-[#2f6b45] text-white",
+    stripe: "shadow-[inset_4px_0_0_#2f6b45]",
+    dot: "bg-[#2f6b45]",
+  },
+  {
+    fill: "border-[#2d4a52] bg-[#3f6670] text-white",
+    stripe: "shadow-[inset_4px_0_0_#3f6670]",
+    dot: "bg-[#3f6670]",
+  },
+  {
+    fill: "border-[#723616] bg-[#9a4a1f] text-white",
+    stripe: "shadow-[inset_4px_0_0_#9a4a1f]",
+    dot: "bg-[#9a4a1f]",
+  },
 ];
 
-const ORDER = ["s1", "s2", "s3", "s4", "s5"];
+const ORDER = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10"];
 
 export function studentColor(studentId: string | undefined): StudentColor | undefined {
   if (!studentId) return undefined;

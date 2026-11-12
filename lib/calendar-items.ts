@@ -140,6 +140,12 @@ export const SLOT_STYLES: Record<SlotDisplay, string> = {
   CLOSED: "border border-zinc-200 bg-closed-stripes text-zinc-500",
 };
 
+/**
+ * 레슨생 화면의 '가능'(강사가 열어 둔 빈 시간): 레슨생에게 가장 중요한 정보라
+ * 테두리만 있는 강사 화면과 달리 밝은 초록으로 채워 눈에 띄게 한다.
+ */
+export const STUDENT_OPEN_STYLE = "border border-emerald-600 bg-emerald-100 font-semibold text-emerald-900";
+
 export const EXTERNAL_STYLES = {
   GOOGLE: "border border-blue-300 border-l-4 border-l-blue-600 bg-blue-50 text-blue-900",
   KAKAO: "border border-coral-300 border-l-4 border-l-coral-600 bg-coral-50 text-coral-800",
@@ -194,7 +200,7 @@ export function slotTitle(view: SlotView, role: UserRole): string {
       case "SKIPPED":
         return `${name} ${skippedLabel}`;
       case "PENDING_BOOKING":
-        return `${name} 보강 신청`;
+        return proposedByInstructor ? `${name} 보강 제안` : `${name} 보강 신청`;
       case "PENDING_CHANGE_FROM":
         return proposedByInstructor ? `${name} 변경 제안` : `${name} 변경 요청`;
       case "PENDING_CHANGE_TO":
@@ -215,7 +221,7 @@ export function slotTitle(view: SlotView, role: UserRole): string {
     case "SKIPPED":
       return skippedLabel;
     case "PENDING_BOOKING":
-      return "보강 승인 대기";
+      return proposedByInstructor ? "보강 제안 도착" : "보강 승인 대기";
     case "PENDING_CHANGE_FROM":
       return proposedByInstructor ? "변경 제안 도착" : "변경 요청 중";
     case "PENDING_CHANGE_TO":
@@ -231,6 +237,7 @@ export const itemTitle = (item: CalendarItem, role: UserRole) =>
 /** 강사 화면에서는 레슨생별로 확정 레슨 색을 조금씩 다르게, 다른 상태는 왼쪽 띠로 구분한다 */
 export const itemClass = (item: CalendarItem, role: UserRole) => {
   if (item.kind === "external") return EXTERNAL_STYLES[item.event.provider];
+  if (role === "STUDENT" && item.view.display === "OPEN") return STUDENT_OPEN_STYLE;
   const base = SLOT_STYLES[item.view.display];
   const color = role === "INSTRUCTOR" ? studentColor(item.view.slot.studentId) : undefined;
   if (!color || item.view.display === "OPEN") return base;
@@ -263,9 +270,11 @@ export const isDimmed = (item: CalendarItem, focus: string | null, picking = fal
 };
 
 /** 요청 종류 이름 */
-export const requestKindLabel = (r: { kind: string }) =>
+export const requestKindLabel = (r: { kind: string; requestedBy?: string }) =>
   r.kind === "BOOKING"
-    ? "보강 신청"
+    ? r.requestedBy === "INSTRUCTOR"
+      ? "보강 제안"
+      : "보강 신청"
     : r.kind === "HOLIDAY"
       ? "공휴일 결정"
       : r.kind === "DEFER"

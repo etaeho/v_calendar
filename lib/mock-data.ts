@@ -21,7 +21,12 @@ import type {
   User,
 } from "@/types/calendar";
 
-/** 테스트베드: 강사 1명 + 레슨생 5명 */
+/**
+ * 테스트베드: 강사 1명 + 레슨생 10명
+ * - 진행 중: 이도윤·최민준·정서아·한지우·윤시우
+ * - 이번 달(11월) 만기: 박서연 / 다음 달(12월) 만기: 김하은
+ * - 아직 수강 등록 전(신규 등록 테스트용): 강서준·임하린·오지호
+ */
 export const INSTRUCTOR: User = { id: "t1", name: "정유진 선생님", role: "INSTRUCTOR" };
 
 export const STUDENTS: User[] = [
@@ -30,6 +35,11 @@ export const STUDENTS: User[] = [
   { id: "s3", name: "박서연", role: "STUDENT" },
   { id: "s4", name: "최민준", role: "STUDENT" },
   { id: "s5", name: "정서아", role: "STUDENT" },
+  { id: "s6", name: "한지우", role: "STUDENT" },
+  { id: "s7", name: "윤시우", role: "STUDENT" },
+  { id: "s8", name: "강서준", role: "STUDENT" },
+  { id: "s9", name: "임하린", role: "STUDENT" },
+  { id: "s10", name: "오지호", role: "STUDENT" },
 ];
 
 export const USERS: User[] = [INSTRUCTOR, ...STUDENTS];
@@ -59,8 +69,12 @@ function seedEnrollments(now: Date): EnrollmentInput[] {
     { studentId: "s3", startDate: monthStart(-2), endDate: monthEnd(0), times: [t(3, "17:00")], weeks: weekly, changeDeadlineHours: 24, fee: 220_000, paymentDay: 5 },
     // 격주(2·4주) 월 2회 · 6개월
     { studentId: "s4", startDate: monthStart(0), endDate: monthEnd(5), times: [t(5, "16:00")], weeks: [2, 4], changeDeadlineHours: 48, fee: 110_000, paymentDay: 10 },
-    // 주 2회 월 8회 · 3개월, 변경 마감 없음
-    { studentId: "s5", startDate: monthStart(-1), endDate: monthEnd(1), times: [t(2, "17:00"), t(6, "13:00")], weeks: weekly, changeDeadlineHours: 0, fee: 380_000, paymentDay: 15 },
+    // 주 2회 월 8회 · 4개월, 변경 마감 없음
+    { studentId: "s5", startDate: monthStart(-1), endDate: monthEnd(2), times: [t(2, "17:00"), t(6, "13:00")], weeks: weekly, changeDeadlineHours: 0, fee: 380_000, paymentDay: 15 },
+    // 주 1회 · 6개월
+    { studentId: "s6", startDate: monthStart(-1), endDate: monthEnd(4), times: [t(4, "16:00")], weeks: weekly, changeDeadlineHours: 24, fee: 200_000, paymentDay: 20 },
+    // 격주(1·3주) 월 2회 · 3개월
+    { studentId: "s7", startDate: monthStart(0), endDate: monthEnd(2), times: [t(1, "17:00")], weeks: [1, 3], changeDeadlineHours: 24, fee: 110_000, paymentDay: 3 },
   ];
 }
 
