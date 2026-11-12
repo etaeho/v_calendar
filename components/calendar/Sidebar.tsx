@@ -7,7 +7,7 @@ import { CALENDARS } from "@/lib/calendars";
 import { canCancel, canResolve } from "@/lib/lesson-machine";
 import { userName } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
-import { actorForRole, syncKey, useCalendarStore } from "@/store/calendar-store";
+import { syncKey, useActor, useCalendarStore } from "@/store/calendar-store";
 import type { ExternalProvider, ScheduleRequest, SlotDisplay, UserRole } from "@/types/calendar";
 
 const LEGEND: { display: SlotDisplay; label: string; hint: string }[] = [
@@ -42,7 +42,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const setCursor = useCalendarStore((s) => s.setCursor);
   const resetDemo = useCalendarStore((s) => s.resetDemo);
 
-  const actor = actorForRole(role);
+  const actor = useActor();
   const allOn = CALENDARS.every((c) => filters[c.id]);
 
   const mine = requests.filter((r) => role === "INSTRUCTOR" || r.studentId === actor.userId);

@@ -4,7 +4,8 @@ import { addMonths, addWeeks, endOfWeek, format, startOfWeek } from "date-fns";
 import { ChevronLeft, ChevronRight, GraduationCap, Menu, Music } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { useCalendarStore, userForRole } from "@/store/calendar-store";
+import { STUDENTS } from "@/lib/mock-data";
+import { useCalendarStore } from "@/store/calendar-store";
 import type { CalendarViewMode } from "@/types/calendar";
 
 const VIEWS: { id: CalendarViewMode; label: string }[] = [
@@ -20,6 +21,8 @@ export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const setCursor = useCalendarStore((s) => s.setCursor);
   const setView = useCalendarStore((s) => s.setView);
   const setRole = useCalendarStore((s) => s.setRole);
+  const studentId = useCalendarStore((s) => s.studentId);
+  const setStudent = useCalendarStore((s) => s.setStudent);
 
   const date = new Date(cursor);
   const move = (dir: 1 | -1) =>
@@ -121,14 +124,25 @@ export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
           <GraduationCap className="size-3.5" />
           레슨생
         </span>
-        <span
-          className={cn(
-            "rounded-full px-2.5 py-1 text-xs font-medium text-white",
-            isInstructor ? "bg-zinc-700" : "bg-mint-600",
-          )}
-        >
-          {userForRole(role).name}
-        </span>
+        {isInstructor ? (
+          <span className="rounded-full bg-zinc-700 px-2.5 py-1 text-xs font-medium text-white">
+            정유진 선생님
+          </span>
+        ) : (
+          <select
+            id="acting-student"
+            aria-label="테스트할 레슨생 선택"
+            value={studentId}
+            onChange={(e) => setStudent(e.target.value)}
+            className="h-7 rounded-full border-0 bg-mint-600 py-0 pr-7 pl-2.5 text-xs font-medium text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-mint-600"
+          >
+            {STUDENTS.map((s, i) => (
+              <option key={s.id} value={s.id} className="bg-white text-zinc-900">
+                레슨생 {i + 1} · {s.name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
     </header>
   );

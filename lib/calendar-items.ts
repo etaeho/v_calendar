@@ -5,7 +5,7 @@ import { ko } from "date-fns/locale";
 import { useMemo } from "react";
 import { getSlotViews, overlaps } from "@/lib/lesson-machine";
 import { userName } from "@/lib/mock-data";
-import { actorForRole, useCalendarStore } from "@/store/calendar-store";
+import { useActor, useCalendarStore } from "@/store/calendar-store";
 import type { ExternalEvent, SlotDisplay, SlotView, UserRole } from "@/types/calendar";
 
 export type CalendarItem =
@@ -25,18 +25,15 @@ export const fmtRange = (start: Date | string, end: Date | string) =>
 /** 현재 역할의 사용자에게 보이는 슬롯(마스킹 적용) */
 export function useSlotViews(): SlotView[] {
   const lesson = useCalendarStore((s) => s.lesson);
-  const role = useCalendarStore((s) => s.role);
-  return useMemo(() => getSlotViews(lesson, actorForRole(role)), [lesson, role]);
+  const actor = useActor();
+  return useMemo(() => getSlotViews(lesson, actor), [lesson, actor]);
 }
 
 /** 현재 사용자의 (동기화된) 외부 캘린더 일정 */
 export function useMyExternalEvents(): ExternalEvent[] {
   const events = useCalendarStore((s) => s.externalEvents);
-  const role = useCalendarStore((s) => s.role);
-  return useMemo(() => {
-    const userId = actorForRole(role).userId;
-    return events.filter((e) => e.ownerId === userId);
-  }, [events, role]);
+  const { userId } = useActor();
+  return useMemo(() => events.filter((e) => e.ownerId === userId), [events, userId]);
 }
 
 /** 필터가 적용된, 달력에 그릴 전체 항목 (시작 시간순) */

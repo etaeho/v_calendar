@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { create } from "zustand";
 import {
   addComment,
@@ -16,7 +17,7 @@ import {
   requestChangeToNewTime,
   type MachineContext,
 } from "@/lib/lesson-machine";
-import { createInitialLessonState, INSTRUCTOR, ME_STUDENT } from "@/lib/mock-data";
+import { createInitialLessonState, INSTRUCTOR, STUDENTS, USERS } from "@/lib/mock-data";
 import { calendarSyncServices } from "@/lib/services/calendar-sync";
 import type {
   Actor,
@@ -61,6 +62,8 @@ interface CalendarStore {
   /** 현재 시각 (ISO). 렌더 순수성을 위해 스토어에서 주기적으로 갱신한다 */
   now: string;
   role: UserRole;
+  /** 레슨생 모드에서 지금 행동하는 레슨생 (테스트베드: 5명 중 선택) */
+  studentId: string;
   view: CalendarViewMode;
   /** 현재 보고 있는 기준 날짜 (ISO) */
   cursor: string;
@@ -76,6 +79,7 @@ interface CalendarStore {
   tick: () => void;
   resetDemo: () => void;
   setRole: (role: UserRole) => void;
+  setStudent: (studentId: string) => void;
   setView: (view: CalendarViewMode) => void;
   setCursor: (date: Date) => void;
   toggleFilter: (id: CalendarCategory) => void;
@@ -106,13 +110,23 @@ const ctx: MachineContext = {
   id: (prefix) => `${prefix}-${Date.now().toString(36)}-${++seq}`,
 };
 
-export const userForRole = (role: UserRole): User =>
-  role === "INSTRUCTOR" ? INSTRUCTOR : ME_STUDENT;
+/** 지금 화면을 보고 있는 사용자 */
+export const currentUser = (role: UserRole, studentId: string): User =>
+  role === "INSTRUCTOR" ? INSTRUCTOR : (USERS.find((u) => u.id === studentId) ?? STUDENTS[0]);
 
-export const actorForRole = (role: UserRole): Actor => ({
-  userId: userForRole(role).id,
+export const actorOf = (role: UserRole, studentId: string): Actor => ({
+  userId: currentUser(role, studentId).id,
   role,
 });
+
+const actorFromState = (s: { role: UserRole; studentId: string }) => actorOf(s.role, s.studentId);
+
+/** 컴포넌트용: 현재 행위자 (역할 + 사용자) */
+export function useActor(): Actor {
+  const role = useCalendarStore((s) => s.role);
+  const studentId = useCalendarStore((s) => s.studentId);
+  return useMemo(() => actorOf(role, studentId), [role, studentId]);
+}
 
 export const syncKey = (userId: string, provider: ExternalProvider) => `${userId}:${provider}`;
 
@@ -128,7 +142,7 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     success?: string,
   ): boolean => {
     try {
-      const lesson = fn(get().lesson, actorForRole(get().role));
+      const lesson = fn(get().lesson, actorFromState(get()));
       set({ lesson });
       if (success) toast("success", success);
       return true;
@@ -158,6 +172,7 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     initialized: false,
     now: "",
     role: "STUDENT",
+    studentId: STUDENTS[0].id,
     view: "week",
     cursor: "",
     filters: { LESSON: true, GOOGLE: true, KAKAO: true },
@@ -198,6 +213,11 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       const keep = drawer.type === "slot" || drawer.type === "day";
       set({ role, drawer: keep ? drawer : { type: "closed" } });
     },
+    setStudent: (studentId) => {
+      const { drawer } = get();
+      const keep = drawer.type === "slot" || drawer.type === "day";
+      set({ studentId, role: "STUDENT", drawer: keep ? drawer : { type: "closed" } });
+    },
     setView: (view) => set({ view }),
     setCursor: (date) => set({ cursor: date.toISOString() }),
     toggleFilter: (id) => set((s) => ({ filters: { ...s.filters, [id]: !s.filters[id] } })),
@@ -207,7 +227,7 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     dismissToast: () => set({ toast: null }),
 
     syncCalendar: async (provider) => {
-      const userId = userForRole(get().role).id;
+      const userId = actorFromState(get()).userId;
       const key = syncKey(userId, provider);
       if (get().sync[key]?.status === "syncing") return;
       set((s) => ({ sync: { ...s.sync, [key]: { ...s.sync[key], status: "syncing" } } }));
@@ -286,8 +306,8 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     },
 
     dropSlot: (slotId, start) => {
-      const { lesson, role, now } = get();
-      const plan = planDrop(lesson, actorForRole(role), slotId, start.toISOString(), now);
+      const { lesson, now } = get();
+      const plan = planDrop(lesson, actorFromState(get()), slotId, start.toISOString(), now);
       switch (plan.kind) {
         case "none":
           return;

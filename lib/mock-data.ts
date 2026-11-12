@@ -13,16 +13,18 @@ import type {
   User,
 } from "@/types/calendar";
 
+/** 테스트베드: 강사 1명 + 레슨생 5명 */
 export const INSTRUCTOR: User = { id: "t1", name: "정유진 선생님", role: "INSTRUCTOR" };
-/** 레슨생 모드에서 '나' */
-export const ME_STUDENT: User = { id: "s1", name: "김하은", role: "STUDENT" };
 
-export const USERS: User[] = [
-  INSTRUCTOR,
-  ME_STUDENT,
+export const STUDENTS: User[] = [
+  { id: "s1", name: "김하은", role: "STUDENT" },
   { id: "s2", name: "이도윤", role: "STUDENT" },
   { id: "s3", name: "박서연", role: "STUDENT" },
+  { id: "s4", name: "최민준", role: "STUDENT" },
+  { id: "s5", name: "정서아", role: "STUDENT" },
 ];
+
+export const USERS: User[] = [INSTRUCTOR, ...STUDENTS];
 
 export const userName = (id: string | undefined) =>
   USERS.find((u) => u.id === id)?.name ?? "알 수 없음";
@@ -65,6 +67,8 @@ export function createInitialLessonState(now: Date): LessonState {
   // 지난주
   add("l-s1-prev", -5, 19, lesson("s1"));
   add("l-s2-prev", -6, 18, lesson("s2"));
+  add("l-s4-prev", -2, 16, lesson("s4"));
+  add("l-s5-prev", -1, 13, lesson("s5"));
 
   // 이번 주 (0=일 … 6=토)
   add("l-s2-w1", 1, 18, lesson("s2"));
@@ -72,6 +76,7 @@ export function createInitialLessonState(now: Date): LessonState {
   add("l-s3-w1", 3, 17, lesson("s3"));
   add("o-thu-18", 4, 18);
   add("o-thu-19", 4, 19);
+  add("l-s4-w1", 5, 16, lesson("s4"));
   add("o-fri-17", 5, 17);
   add("p-s3-fri-18", 5, 18, {
     status: "PENDING_BOOKING",
@@ -81,6 +86,7 @@ export function createInitialLessonState(now: Date): LessonState {
   });
   add("o-sat-10", 6, 10);
   add("o-sat-11", 6, 11);
+  add("l-s5-w1", 6, 13, lesson("s5"));
   add("p-s1-sat-14", 6, 14, {
     status: "PENDING_BOOKING",
     studentId: "s1",
@@ -98,25 +104,45 @@ export function createInitialLessonState(now: Date): LessonState {
     requestId: "req-change-t1",
     threadId: "t-l-s1-w2",
   }));
-  add("o-thu-18-w2", 11, 18);
+  add("p-s5-thu-18-w2", 11, 18, {
+    status: "PENDING_BOOKING",
+    studentId: "s5",
+    lessonType: "MAKEUP",
+    requestId: "req-book-s5",
+  });
   add("c-s2-thu-19", 11, 19, lesson("s2", {
     status: "PENDING_CHANGE",
     requestId: "req-change-s2",
     threadId: "t-l-s2-w2",
   }));
+  add("l-s4-w2", 12, 16, lesson("s4"));
   add("o-fri-19-w2", 12, 19);
   add("o-sat-10-w2", 13, 10);
   add("o-sat-11-w2", 13, 11);
+  add("l-s5-w2", 13, 13, lesson("s5"));
 
   // 그다음 주 정규 레슨
   add("l-s2-w3", 15, 18, lesson("s2"));
   add("l-s1-w3", 16, 19, lesson("s1"));
   add("l-s3-w3", 17, 17, lesson("s3"));
+  add("l-s4-w3", 19, 16, lesson("s4"));
+  add("l-s5-w3", 20, 13, lesson("s5"));
 
   const start = (id: string) => slots.find((s) => s.id === id)!.start;
   const ago = (hours: number) => iso(addMinutes(now, -hours * 60));
 
   const requests: ScheduleRequest[] = [
+    {
+      id: "req-book-s5",
+      kind: "BOOKING",
+      status: "PENDING",
+      studentId: "s5",
+      requestedBy: "STUDENT",
+      toSlotId: "p-s5-thu-18-w2",
+      toStart: start("p-s5-thu-18-w2"),
+      message: "학교 시험 끝나고 보강 받고 싶어요.",
+      createdAt: ago(1),
+    },
     {
       id: "req-book-s3",
       kind: "BOOKING",
@@ -192,6 +218,8 @@ export function createInitialLessonState(now: Date): LessonState {
     comment("t-l-s2-w2", 8, "목요일 7시면 학원 끝나고 바로 갈 수 있어요.", "s2"),
     comment("t-l-s1-w2", 3, "강사가 일정 변경을 요청했습니다. 레슨생 동의를 기다리는 중입니다."),
     comment("t-l-s1-w2", 2, "수요일에 어렵다면 편하게 거절해도 괜찮아요.", "t1"),
+    comment("t-l-s4-w1", 26, "선생님 이번 주 송진 새로 사 갈게요.", "s4"),
+    comment("t-l-s4-w1", 25, "네 좋아요. 활 털도 한번 봐 줄게요.", "t1"),
   ];
 
   return { slots, requests, comments };
@@ -200,7 +228,7 @@ export function createInitialLessonState(now: Date): LessonState {
 type EventSeed = [day: number, hour: number, minute: number, minutes: number, title: string, location?: string];
 
 const EXTERNAL_SEEDS: Record<string, Record<ExternalProvider, EventSeed[]>> = {
-  [ME_STUDENT.id]: {
+  s1: {
     GOOGLE: [
       [1, 10, 0, 60, "주간 팀 회의", "회의실 A"],
       [3, 14, 0, 90, "디자인 리뷰"],
@@ -215,6 +243,43 @@ const EXTERNAL_SEEDS: Record<string, Record<ExternalProvider, EventSeed[]>> = {
       [7, 12, 0, 120, "가족 모임"],
       [11, 19, 0, 120, "동호회 정모", "홍대"],
       [13, 13, 0, 120, "결혼식", "강남 웨딩홀"],
+    ],
+  },
+  s2: {
+    GOOGLE: [
+      [1, 15, 0, 120, "학교 수업", "OO고등학교"],
+      [9, 16, 0, 90, "수학 학원"],
+    ],
+    KAKAO: [
+      [4, 20, 0, 60, "친구 생일 파티"],
+      [11, 17, 0, 60, "스터디 모임"],
+    ],
+  },
+  s3: {
+    GOOGLE: [
+      [3, 18, 0, 60, "콩쿠르 반주 맞추기", "예술회관 연습실"],
+      [12, 10, 0, 120, "콩쿠르 본선", "예술회관"],
+    ],
+    KAKAO: [[6, 12, 0, 120, "가족 외식"]],
+  },
+  s4: {
+    GOOGLE: [
+      [5, 15, 30, 60, "팀 프로젝트 회의", "온라인"],
+      [8, 9, 0, 120, "중간 발표"],
+    ],
+    KAKAO: [
+      [6, 17, 0, 120, "동아리 공연 연습"],
+      [12, 16, 30, 90, "병원 예약"],
+    ],
+  },
+  s5: {
+    GOOGLE: [
+      [4, 17, 30, 60, "영어 학원"],
+      [11, 17, 30, 60, "영어 학원"],
+    ],
+    KAKAO: [
+      [6, 13, 0, 60, "가족 점심"],
+      [13, 11, 0, 90, "피아노 레슨"],
     ],
   },
   [INSTRUCTOR.id]: {

@@ -17,14 +17,14 @@ import {
 import { mainHoliday } from "@/lib/holidays";
 import { planDrop, type DropPlan } from "@/lib/lesson-machine";
 import { cn } from "@/lib/utils";
-import { actorForRole, useCalendarStore } from "@/store/calendar-store";
+import { useActor, useCalendarStore } from "@/store/calendar-store";
 
 const HOUR_START = 7;
 const HOUR_END = 23;
-/** 1분 = 1px */
-const HOUR_PX = 60;
-/** 드래그 스냅 단위 = 30분 점선 */
-const SNAP_MIN = 30;
+/** 15분 = 16px */
+const HOUR_PX = 64;
+/** 드래그 스냅 단위 = 15분 선 */
+const SNAP_MIN = 15;
 const HOURS = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i);
 const TOTAL_MIN = (HOUR_END - HOUR_START) * 60;
 const DRAG_THRESHOLD_PX = 4;
@@ -127,6 +127,7 @@ export function WeekView() {
   const openDrawer = useCalendarStore((s) => s.openDrawer);
   const createSlot = useCalendarStore((s) => s.createSlot);
   const dropSlot = useCalendarStore((s) => s.dropSlot);
+  const actor = useActor();
   const items = useCalendarItems();
   const linked = useLinkedSlotIds();
   const onItemClick = useItemClick();
@@ -241,7 +242,7 @@ export function WeekView() {
     : null;
   const plan: DropPlan | null =
     move && moveStartIso
-      ? planDrop(lesson, actorForRole(role), move.slotId, moveStartIso, now)
+      ? planDrop(lesson, actor, move.slotId, moveStartIso, now)
       : null;
 
   const pendingRange = drawer.type === "reschedule" ? drawer.toRange : undefined;
@@ -334,12 +335,19 @@ export function WeekView() {
                 )}
                 style={{ height: minToPx(TOTAL_MIN) }}
               >
-                {/* 1시간 실선 · 30분 점선 */}
+                {/* 1시간 실선 · 30분 점선 · 15분 얇은 점선 */}
                 {HOURS.map((h, i) => (
                   <div key={h} className="pointer-events-none absolute inset-x-0" style={{ top: i * HOUR_PX }}>
                     {i > 0 && <div className="border-t border-zinc-300" />}
+                    {[1, 3].map((q) => (
+                      <div
+                        key={q}
+                        className="absolute inset-x-0 border-t-[0.5px] border-dotted border-zinc-200"
+                        style={{ top: (HOUR_PX / 4) * q }}
+                      />
+                    ))}
                     <div
-                      className="absolute inset-x-0 border-t border-dashed border-zinc-200"
+                      className="absolute inset-x-0 border-t border-dashed border-zinc-300/80"
                       style={{ top: HOUR_PX / 2 }}
                     />
                   </div>
@@ -460,7 +468,7 @@ export function WeekView() {
           {role === "INSTRUCTOR" ? (
             <>
               빈 시간대를 <strong>클릭</strong>(60분)하거나 <strong>드래그</strong>해 슬롯 열기 · 일정을{" "}
-              <strong>끌어서</strong> 30분 단위로 옮기기
+              <strong>끌어서</strong> 15분 단위로 옮기기
             </>
           ) : (
             <>

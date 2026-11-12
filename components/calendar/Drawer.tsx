@@ -44,7 +44,7 @@ import { holidaysOn } from "@/lib/holidays";
 import { canCancel, canResolve } from "@/lib/lesson-machine";
 import { INSTRUCTOR, userName } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
-import { actorForRole, useCalendarStore } from "@/store/calendar-store";
+import { useActor, useCalendarStore } from "@/store/calendar-store";
 import type { Comment, ExternalEvent, SlotView } from "@/types/calendar";
 
 export function Drawer() {
@@ -284,12 +284,12 @@ function SlotPanel({ slotId }: { slotId: string }) {
   const myEvents = useMyExternalEvents();
   const [tab, setTab] = useState<SlotTab>("detail");
   const [message, setMessage] = useState("");
+  const actor = useActor();
 
   const view = views.find((v) => v.slot.id === slotId);
   if (!view) return <Empty>삭제되었거나 볼 수 없는 슬롯입니다.</Empty>;
 
   const { slot, display, request } = view;
-  const actor = actorForRole(role);
   const isPast = new Date(slot.start) < new Date(now);
 
   if (view.masked) {
@@ -479,7 +479,7 @@ function RequestCard({ view, views }: { view: SlotView; views: SlotView[] }) {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const request = view.request!;
-  const actor = actorForRole(role);
+  const actor = useActor();
   const resolvable = canResolve(request, actor);
   const cancellable = canCancel(request, actor);
 
@@ -710,7 +710,7 @@ function ReschedulePanel({
 
         <fieldset>
           <legend className="mb-1.5 text-xs font-semibold text-zinc-500">
-            변경할 빈 슬롯 선택 (달력에서 '가능' 슬롯을 눌러도 됩니다)
+            변경할 빈 슬롯 선택 (달력에서 &lsquo;가능&rsquo; 슬롯을 눌러도 됩니다)
           </legend>
           {toRange && (
             <div className="mb-1.5 rounded-lg border-2 border-violet-500 bg-violet-50 px-3 py-2 text-sm">
@@ -803,8 +803,7 @@ function ReschedulePanel({
 
 /** 강사와 레슨생이 주고받는 메시지 (요청·자동 기록은 '상세 · 요청' 탭에 따로 표시) */
 function Messenger({ comments, studentId }: { comments: Comment[]; studentId?: string }) {
-  const role = useCalendarStore((s) => s.role);
-  const meId = actorForRole(role).userId;
+  const meId = useActor().userId;
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
