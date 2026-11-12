@@ -58,7 +58,7 @@
 클라이언트 ID 는 브라우저에 그대로 노출되는 **공개 값**이라 비밀이 아니지만, 관리 편의상 Secret 으로 넣습니다.
 1. GitHub 저장소 → **Settings → Secrets and variables → Actions → New repository secret**
 2. 이름 `NEXT_PUBLIC_GOOGLE_CLIENT_ID`, 값: 복사한 클라이언트 ID.
-3. 배포 워크플로(`.github/workflows/deploy.yml`)의 `npm run build` 단계 `env:` 에 다음 줄이 있어야 빌드에 들어갑니다:
+3. 배포 워크플로(`.github/workflows/deploy.yml`)의 `npm run build` 단계 `env:` 에 다음 줄이 이미 들어 있습니다:
    ```yaml
    NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ secrets.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
    ```
@@ -128,14 +128,14 @@ supabase functions deploy kakao-oauth --no-verify-jwt
 `supabase/config.toml` 에 `[functions.kakao-oauth]` / `verify_jwt = false` 를 적어 두면 플래그 없이 배포해도 같습니다.
 
 ### 2-6. GitHub 에 등록
-Repository secrets 에 추가하고, `deploy.yml` 의 `npm run build` 단계 `env:` 에도 같은 이름으로 연결합니다.
+Repository secrets 에 추가합니다. `deploy.yml` 의 `npm run build` 단계 `env:` 에는 같은 이름으로 이미 연결되어 있습니다.
 
 | 이름 | 값 예시 | 공개 여부 |
 | --- | --- | --- |
 | `NEXT_PUBLIC_KAKAO_JS_KEY` | JavaScript 키 | 공개 값 |
 | `NEXT_PUBLIC_KAKAO_REDIRECT_URI` | `https://etaeho.github.io/v_calendar/` | 공개 값 |
 | `NEXT_PUBLIC_SUPABASE_URL` | `https://xxxx.supabase.co` | 공개 값 |
-| (선택) `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon/publishable 키 | 공개 값 — 함수의 JWT 검사를 켠 경우에만 필요 |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon/publishable 키 | 공개 값 — URL 과 함께 있어야 서버 모드가 켜짐 |
 
 로컬 `.env.local` 에서는 `NEXT_PUBLIC_KAKAO_REDIRECT_URI=http://localhost:3000/` 로 둡니다.
 

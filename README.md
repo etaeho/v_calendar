@@ -1,6 +1,18 @@
 # V Calendar — 바이올린 레슨 스케줄러 + 통합 캘린더 (MVP)
 
-타임트리 스타일의 다중 캘린더 UI 위에서 **강사의 레슨 가능 시간 오픈 → 레슨생의 보강 신청 / 일정 변경 요청 → 상호 동의(승인·거절)** 워크플로우를 검증하기 위한 Phase 1 로컬 프로토타입입니다. 서버·DB 없이 브라우저 메모리에서만 동작하며, 새로고침하면 데모 데이터로 초기화됩니다.
+타임트리 스타일의 다중 캘린더 UI 위에서 **강사의 레슨 가능 시간 오픈 → 레슨생의 보강 신청 / 일정 변경 요청 → 상호 동의(승인·거절)** 워크플로우를 제공하는 웹앱입니다.
+
+앱은 설정에 따라 두 모드로 동작합니다.
+
+| 모드 | 조건 | 동작 |
+| --- | --- | --- |
+| **데모** (기본) | Supabase 값이 없음 | 서버 없이 브라우저 메모리에서 동작, 강사·레슨생 10명 테스트 데이터, 새로고침하면 초기화 |
+| **서버** | `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` | 이메일 로그인, 강사가 레슨실을 만들고 레슨생을 이메일로 초대, 모든 변경은 서버(Edge Function)가 검증·저장, 실시간 반영, 앱 내 알림 + 카카오 알림톡(선택) |
+
+구글·카카오 캘린더도 각각 키가 있을 때만 실제 연동되고, 없으면 데모 일정으로 동작합니다.
+
+- 서버 설정: [docs/SETUP-SUPABASE.md](docs/SETUP-SUPABASE.md) (DB·로그인·실시간·알림톡)
+- 캘린더 설정: [docs/SETUP-CALENDARS.md](docs/SETUP-CALENDARS.md) (구글 캘린더 읽기/쓰기, 카카오 로그인·톡캘린더)
 
 ## 실행
 
@@ -14,6 +26,8 @@ npm run dev        # http://localhost:3000
 | `npm test` | 상태 머신 단위 테스트 (Node 내장 test runner, Node 22.18+ 필요) |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript 검사 |
 | `npm run build` | 정적 사이트를 `out/` 에 export |
+| `npm run supabase:shared` | `lib/` 의 도메인 코드를 Edge Function 용 `supabase/functions/_shared` 로 복사 (`-- --check` 로 확인만) |
+| `node e2e/server-mode.mjs` | 서버 모드 종단 테스트 (파일 상단 실행 방법 참고) |
 
 ## 화면 구성 (PC · 휴대폰)
 
@@ -64,11 +78,23 @@ store/calendar-store.ts        Zustand 스토어 (역할, 필터, 뷰, Drawer, �
 components/calendar/*          Header, Sidebar, MonthView, WeekView, Drawer, StudentsView(레슨생 관리)
 ```
 
-## 다음 단계
+## 서버 구조 (Phase 2·3)
 
-- **Phase 2 (DB·인증)**: `lib/lesson-machine.ts` 의 전이 함수를 서버(Supabase RPC 등)로 옮기고, 스토어의 `transition()` 을 API 호출로 교체합니다. 현재 마스킹은 클라이언트에서 수행하므로 실제 서비스에서는 서버(RLS)에서 적용해야 합니다.
-- **Phase 3 (외부 캘린더)**: `CalendarSyncService` 를 구현한 Google/Kakao 서비스를 만들어 `calendarSyncServices` 레지스트리를 교체합니다. 레슨 확정 시 `pushLesson()` 이 이미 호출되도록 연결되어 있습니다(현재 Mock 은 기록만 함).
+```
+lib/commands.ts                모든 변경을 직렬화 가능한 명령으로 표현 (브라우저와 서버가 같은 코드 실행)
+lib/visibility.ts              레슨생에게 내려 줄 상태 마스킹 (다른 레슨생 이름·요청·메시지 제거)
+lib/notifications.ts           상태 변화에서 알림 수신자·문구 계산
+lib/server/lesson-api-core.ts  API 핵심 로직 (인증·권한·버전 충돌 검사) — Node 테스트로 검증
+supabase/migrations/           테이블·RLS (레슨실 상태 문서 1개 + 멤버 + 알림 + 실시간 이벤트)
+supabase/functions/lesson-api  위 핵심 로직을 감싼 Edge Function
+supabase/functions/notify-dispatch  알림을 카카오 알림톡(솔라피)으로 발송
+supabase/functions/kakao-oauth 카카오 로그인 토큰 교환 (REST 키·시크릿은 함수 비밀로만 보관)
+lib/integrations/*             구글 캘린더(읽기·레슨 기록), 카카오 톡캘린더
+components/calendar/AuthGate   로그인 → 레슨실 만들기/초대 확인 → 앱, 실시간 새로고침
+```
+
+서버 모드에서 화면은 먼저 결과를 보여 주고(낙관적 반영) 서버 응답으로 바로 맞춥니다. 서버가 거절하면 서버 상태로 되돌리고 이유를 알려 줍니다.
 
 ## 배포 (GitHub Pages)
 
-`.github/workflows/deploy.yml` 이 `main` 브랜치 push 시 lint → test → build 후 `out/` 을 GitHub Pages 에 배포합니다. 저장소 **Settings → Pages → Source** 를 **GitHub Actions** 로 설정해야 합니다. 하위 경로 배포를 위해 빌드 시 `NEXT_PUBLIC_BASE_PATH=/<repo>` 가 주입됩니다.
+`.github/workflows/deploy.yml` 이 `main` 브랜치 push 시 lint → test → build 후 `out/` 을 GitHub Pages 에 배포합니다. 저장소 **Settings → Pages → Source** 를 **GitHub Actions** 로 설정해야 합니다. 하위 경로 배포를 위해 빌드 시 `NEXT_PUBLIC_BASE_PATH=/<repo>` 가 주입됩니다. 저장소 Secrets 에 `NEXT_PUBLIC_*` 값을 넣으면 배포본이 서버 모드·실제 캘린더 연동으로 바뀌고, 없으면 데모로 배포됩니다.

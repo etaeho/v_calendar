@@ -28,12 +28,21 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      # supabase/functions/_shared 가 lib/ 의 최신 코드와 같은지 확인 (다르면 npm run supabase:shared)
+      - run: npm run supabase:shared -- --check
       # 구글 캘린더 공개 '대한민국의 휴일' 캘린더에서 최신 공휴일을 받는다 (API 키 불필요, 실패 시 저장된 파일 사용)
       - run: npm run holidays
       - run: npm run build
         env:
           # 프로젝트 페이지는 https://<user>.github.io/<repo>/ 로 서빙된다
           NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
+          # 아래 값은 모두 브라우저에 공개되는 값이다 (비밀 키 아님). 비어 있으면 그 기능은 데모로 동작한다.
+          # 설정 방법: docs/SETUP-SUPABASE.md, docs/SETUP-CALENDARS.md
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ secrets.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
+          NEXT_PUBLIC_KAKAO_JS_KEY: ${{ secrets.NEXT_PUBLIC_KAKAO_JS_KEY }}
+          NEXT_PUBLIC_KAKAO_REDIRECT_URI: ${{ secrets.NEXT_PUBLIC_KAKAO_REDIRECT_URI }}
       - if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:

@@ -126,7 +126,7 @@ curl -s -X POST https://<project ref>.supabase.co/functions/v1/lesson-api \
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | 1단계의 anon / publishable key |
 
 - **GitHub Pages 배포용**: GitHub 저장소 → **Settings → Secrets and variables → Actions → New repository secret** 에
-  위 두 이름으로 등록합니다. (Pages 빌드 워크플로가 빌드할 때 이 값을 환경 변수로 넘겨야 합니다.)
+  위 두 이름으로 등록합니다. (`.github/workflows/deploy.yml` 이 빌드할 때 이 값을 넘기도록 이미 설정되어 있습니다.)
 - **내 컴퓨터에서 개발할 때**: 저장소 루트에 `.env.local` 파일을 만들고 두 줄을 적습니다 (`.env*` 는 git 에 올라가지 않음).
 
   ```
