@@ -73,7 +73,7 @@ export function createInitialLessonState(now: Date, holiday: HolidayLookup): Les
   const instructor: Actor = { userId: INSTRUCTOR.id, role: "INSTRUCTOR" };
 
   // 1) 수강 등록 → 기간 전체의 정규 레슨 자동 생성
-  let state: LessonState = { enrollments: [], slots: [], requests: [], comments: [] };
+  let state: LessonState = { enrollments: [], makeupAdjustments: [], slots: [], requests: [], comments: [] };
   for (const input of seedEnrollments(now)) {
     state = registerEnrollment(state, instructor, input, ctx, holiday).state;
   }
@@ -203,7 +203,18 @@ export function createInitialLessonState(now: Date, holiday: HolidayLookup): Les
   chat(s4This, 26, "선생님 이번 주 송진 새로 사 갈게요.", "s4");
   chat(s4This, 25, "네 좋아요. 활 털도 한번 봐 줄게요.", "t1");
 
-  return { enrollments: state.enrollments, slots, requests, comments };
+  // 5) 보강 이력: 지난주 박서연 레슨은 날짜를 못 정해 보강으로 미룸, 결석·강사 사정 조정
+  const s3Last = lessonAt("s3", -4, 17);
+  if (s3Last) {
+    Object.assign(s3Last, { status: "SKIPPED", skipReason: "DEFERRED" });
+    comment(s3Last.threadId, 24 * 6, "레슨생이 동의해 이 레슨은 보강으로 미뤘습니다. (보강 필요 1회)");
+  }
+  const makeupAdjustments = [
+    { id: "seed-adj-1", studentId: "s1", delta: 1, reason: "지난달 결석", createdAt: ago(24 * 20) },
+    { id: "seed-adj-2", studentId: "s2", delta: 1, reason: "강사 사정 취소 (10월)", createdAt: ago(24 * 30) },
+  ];
+
+  return { enrollments: state.enrollments, makeupAdjustments, slots, requests, comments };
 }
 
 type EventSeed = [day: number, hour: number, minute: number, minutes: number, title: string, location?: string];

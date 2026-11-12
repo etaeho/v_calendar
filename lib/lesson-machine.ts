@@ -18,6 +18,7 @@ import type {
   LessonSlot,
   LessonState,
   ScheduleRequest,
+  SkipReason,
   SlotView,
 } from "../types/calendar";
 
@@ -439,8 +440,8 @@ function revert(
   if (request.kind === "BOOKING") {
     return { slots: replaceSlots(state, [toOpen(ctx, to)]) };
   }
-  if (request.kind === "HOLIDAY") {
-    // 공휴일 제안이 반려/취소되면 다시 '결정 필요' 상태로 남는다
+  if (request.kind === "HOLIDAY" || request.kind === "DEFER") {
+    // 공휴일 제안이 반려/취소되면 다시 '결정 필요' 상태로, 보강 미루기는 원래 레슨으로 남는다
     return { slots: replaceSlots(state, [{ ...to, requestId: undefined }]), keepThreadId: to.threadId };
   }
   const from = findSlot(state, request.fromSlotId!);
@@ -472,6 +473,7 @@ export function approveRequest(
       ...to,
       status: skip ? "SKIPPED" : "CONFIRMED",
       holidayDecision: skip ? "SKIP" : "PROCEED",
+      ...(skip ? { skipReason: "HOLIDAY" as const } : {}),
       requestId: undefined,
     };
     return {
@@ -484,8 +486,26 @@ export function approveRequest(
           ctx,
           to.threadId,
           skip
-            ? `공휴일(${to.holidayName ?? "휴일"}) 레슨은 쉬기로 했습니다. (휴강)`
+            ? `공휴일(${to.holidayName ?? "휴일"}) 레슨은 쉬기로 했습니다. (휴강 · 보강 필요 1회)`
             : `공휴일(${to.holidayName ?? "휴일"})이지만 레슨을 그대로 진행하기로 했습니다.`,
+        ),
+      ],
+    };
+  }
+
+  if (request.kind === "DEFER") {
+    return {
+      ...state,
+      slots: replaceSlots(state, [
+        { ...to, status: "SKIPPED", skipReason: "DEFERRED", requestId: undefined },
+      ]),
+      requests: replaceRequest(state, { ...request, status: "APPROVED", resolvedAt: ctx.now() }),
+      comments: [
+        ...state.comments,
+        systemComment(
+          ctx,
+          to.threadId,
+          `${who} 동의해 이 레슨은 보강으로 미뤘습니다. 날짜는 보강 신청으로 다시 잡아 주세요. (보강 필요 1회)`,
         ),
       ],
     };
@@ -543,7 +563,9 @@ export function rejectRequest(
   const what =
     request.kind === "HOLIDAY"
       ? "공휴일 레슨 제안을 거절했습니다. 다시 정해 주세요."
-      : "일정 변경 요청을 거절했습니다. 기존 일정이 유지됩니다.";
+      : request.kind === "DEFER"
+        ? "보강으로 미루기를 거절했습니다. 레슨은 그대로 진행합니다."
+        : "일정 변경 요청을 거절했습니다. 기존 일정이 유지됩니다.";
   return {
     ...state,
     slots,
@@ -595,7 +617,9 @@ export function cancelRequest(
             keepThreadId,
             request.kind === "HOLIDAY"
               ? "공휴일 레슨 제안이 취소되었습니다."
-              : "일정 변경 요청이 취소되었습니다. 기존 일정이 유지됩니다.",
+              : request.kind === "DEFER"
+                ? "보강으로 미루기 요청이 취소되었습니다. 레슨은 그대로 진행합니다."
+                : "일정 변경 요청이 취소되었습니다. 기존 일정이 유지됩니다.",
           ),
         ]
       : state.comments,
@@ -656,6 +680,130 @@ export function proposeHoliday(
 }
 
 /* ------------------------------------------------------------------ */
+/* 보강 관리                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 확정된 정규 레슨을 취소하고 '보강 필요'로 미루자고 요청한다 (새 날짜는 나중에 정함).
+ * 상대방이 동의하면 레슨은 휴강(DEFERRED) 기록이 되고 보강 필요 횟수가 1 늘어난다.
+ */
+export function proposeDefer(
+  state: LessonState,
+  actor: Actor,
+  slotId: string,
+  ctx: MachineContext,
+  message?: string,
+): LessonState {
+  const slot = findSlot(state, slotId);
+  if (slot.status !== "CONFIRMED" || !slot.studentId || slot.lessonType !== "REGULAR")
+    throw new LessonError("INVALID_STATE", "확정된 정규 레슨만 보강으로 미룰 수 있습니다.");
+  if (slot.requestId) throw new LessonError("INVALID_STATE", "이 레슨에 진행 중인 요청이 있습니다.");
+  if (actor.role === "STUDENT" && slot.studentId !== actor.userId)
+    throw new LessonError("FORBIDDEN", "본인의 레슨만 요청할 수 있습니다.");
+  if (isPast(slot.start, ctx)) throw new LessonError("INVALID_STATE", "이미 시작한 레슨은 미룰 수 없습니다.");
+  if (actor.role === "STUDENT" && changeDeadlinePassed(state, slot, ctx.now()))
+    throw new LessonError(
+      "INVALID_STATE",
+      `레슨 시작 ${enrollmentOf(state, slot)!.changeDeadlineHours}시간 전까지만 요청할 수 있습니다.`,
+    );
+
+  const request: ScheduleRequest = {
+    id: ctx.id("req"),
+    kind: "DEFER",
+    status: "PENDING",
+    studentId: slot.studentId,
+    requestedBy: actor.role,
+    toSlotId: slot.id,
+    toStart: slot.start,
+    message: cleanMessage(message),
+    createdAt: ctx.now(),
+  };
+  return {
+    ...state,
+    slots: replaceSlots(state, [{ ...slot, requestId: request.id }]),
+    requests: [...state.requests, request],
+    comments: [
+      ...state.comments,
+      systemComment(
+        ctx,
+        slot.threadId,
+        `${actor.role === "STUDENT" ? "레슨생이" : "강사가"} 이 레슨을 보강으로 미루자고 요청했습니다.`,
+      ),
+    ],
+  };
+}
+
+/** 강사: 보강 필요 횟수를 직접 조정한다 (+1 결석 보강, -1 보강 없이 정리 등) */
+export function adjustMakeup(
+  state: LessonState,
+  actor: Actor,
+  studentId: string,
+  delta: number,
+  reason: string,
+  ctx: MachineContext,
+): LessonState {
+  if (actor.role !== "INSTRUCTOR")
+    throw new LessonError("FORBIDDEN", "보강 횟수는 강사만 조정할 수 있습니다.");
+  if (!Number.isInteger(delta) || delta === 0)
+    throw new LessonError("INVALID_RANGE", "조정할 횟수를 확인해 주세요.");
+  const trimmed = reason.trim();
+  if (!trimmed) throw new LessonError("INVALID_RANGE", "조정 사유를 적어 주세요.");
+  return {
+    ...state,
+    makeupAdjustments: [
+      ...state.makeupAdjustments,
+      { id: ctx.id("adj"), studentId, delta, reason: trimmed, createdAt: ctx.now() },
+    ],
+  };
+}
+
+export const SKIP_REASON_LABEL: Record<SkipReason, string> = {
+  HOLIDAY: "공휴일 휴강",
+  DEFERRED: "보강으로 미룸",
+  CONFLICT: "일정 겹침 · 미배정",
+};
+
+export interface MakeupEntry {
+  at: string;
+  delta: number;
+  label: string;
+  slotId?: string;
+}
+
+/**
+ * 레슨생의 보강 현황.
+ * 보강 필요 = 진행하지 못한 정규 레슨(휴강·미룸·미배정) + 강사 조정
+ * 남은 보강 = 보강 필요 - (완료 + 예정된 보강 레슨). 음수면 추가 레슨을 받은 것.
+ */
+export function makeupSummary(state: LessonState, studentId: string, now: string) {
+  const mine = state.slots.filter((s) => s.studentId === studentId);
+  const skipped = mine.filter((s) => s.status === "SKIPPED" && s.lessonType === "REGULAR");
+  const adjustments = state.makeupAdjustments.filter((a) => a.studentId === studentId);
+  const makeups = mine.filter((s) => s.lessonType === "MAKEUP");
+  const confirmed = makeups.filter((s) => s.status === "CONFIRMED" || s.status === "PENDING_CHANGE");
+  // 변경 요청 중인 보강은 기존 시간 하나만 센다
+  const targets = new Set(
+    state.requests.filter((r) => r.status === "PENDING" && r.kind === "CHANGE").map((r) => r.toSlotId),
+  );
+  const counted = confirmed.filter((s) => !targets.has(s.id));
+  const done = counted.filter((s) => Date.parse(s.end) <= Date.parse(now)).length;
+  const scheduled = counted.length - done;
+  const requested = makeups.filter((s) => s.status === "PENDING_BOOKING").length;
+  const owed = skipped.length + adjustments.reduce((sum, a) => sum + a.delta, 0);
+  const holidayName = (s: LessonSlot) => (s.holidayName ? ` (${s.holidayName})` : "");
+  const entries: MakeupEntry[] = [
+    ...skipped.map((s) => ({
+      at: s.start,
+      delta: 1,
+      label: `${SKIP_REASON_LABEL[s.skipReason ?? "HOLIDAY"]}${holidayName(s)}`,
+      slotId: s.id,
+    })),
+    ...adjustments.map((a) => ({ at: a.createdAt, delta: a.delta, label: `강사 조정 · ${a.reason}` })),
+  ].sort((a, b) => b.at.localeCompare(a.at));
+  return { owed, done, scheduled, requested, remaining: owed - done - scheduled, entries };
+}
+
+/* ------------------------------------------------------------------ */
 /* 시간 경과 처리                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -696,12 +844,18 @@ export function settle(state: LessonState, ctx: MachineContext): LessonState {
       ...next,
       slots: replaceSlots(
         next,
-        lapsed.map((s) => ({ ...s, status: "SKIPPED", holidayDecision: "SKIP", requestId: undefined })),
+        lapsed.map((s) => ({
+          ...s,
+          status: "SKIPPED",
+          holidayDecision: "SKIP",
+          skipReason: "HOLIDAY",
+          requestId: undefined,
+        })),
       ),
       comments: [
         ...next.comments,
         ...lapsed.map((s) =>
-          systemComment(ctx, s.threadId, "결정 없이 공휴일이 지나 휴강으로 처리되었습니다."),
+          systemComment(ctx, s.threadId, "결정 없이 공휴일이 지나 휴강으로 처리되었습니다. (보강 필요 1회)"),
         ),
       ],
     };
@@ -786,6 +940,8 @@ export function getSlotViews(state: LessonState, actor: Actor): SlotView[] {
     let display: SlotView["display"];
     if (slot.status === "PENDING_CHANGE") {
       display = request?.fromSlotId === slot.id ? "PENDING_CHANGE_FROM" : "PENDING_CHANGE_TO";
+    } else if (slot.status === "CONFIRMED" && request?.kind === "DEFER") {
+      display = "PENDING_DEFER";
     } else if (slot.status === "CONFIRMED" && slot.holidayDecision === "UNDECIDED") {
       display = "HOLIDAY_DECISION";
     } else {

@@ -8,8 +8,10 @@ import {
   fmtTime,
   itemClass,
   itemsOnDay,
+  isDimmed,
   itemTitle,
   useCalendarItems,
+  useFocusStudent,
   useItemClick,
   useLinkedSlotIds,
   type CalendarItem,
@@ -133,6 +135,7 @@ export function WeekView() {
   const items = useCalendarItems();
   const linked = useLinkedSlotIds();
   const onItemClick = useItemClick();
+  const focus = useFocusStudent();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const columnsRef = useRef<(HTMLDivElement | null)[]>([]);
@@ -399,7 +402,8 @@ export function WeekView() {
                       title={`${fmtTime(item.start)}–${fmtTime(item.end)} ${itemTitle(item, role)}`}
                       className={cn(
                         "absolute overflow-hidden rounded-md px-1.5 py-0.5 text-left text-xs leading-tight shadow-[0_1px_2px_rgba(0,0,0,0.08)] transition-shadow hover:z-10 hover:shadow-md focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-zinc-900",
-                        itemClass(item),
+                        itemClass(item, role),
+                        isDimmed(item, focus) && "opacity-30 saturate-50 hover:opacity-80",
                         compact ? "flex items-center gap-1" : "flex flex-col justify-start",
                         draggable && "cursor-grab active:cursor-grabbing",
                         linked.has(item.id) && "z-10 ring-2 ring-zinc-900 ring-offset-1",

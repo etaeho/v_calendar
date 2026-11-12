@@ -18,8 +18,10 @@ import {
   fmtTime,
   itemClass,
   itemsOnDay,
+  isDimmed,
   itemTitle,
   useCalendarItems,
+  useFocusStudent,
   useItemClick,
   useLinkedSlotIds,
 } from "@/lib/calendar-items";
@@ -40,6 +42,7 @@ export function MonthView() {
   const items = useCalendarItems();
   const linked = useLinkedSlotIds();
   const onItemClick = useItemClick();
+  const focus = useFocusStudent();
   const dropSlot = useCalendarStore((s) => s.dropSlot);
   const [dragId, setDragId] = useState<string | null>(null);
   const [overDay, setOverDay] = useState<string | null>(null);
@@ -186,7 +189,8 @@ export function MonthView() {
                       title={`${fmtTime(item.start)} ${itemTitle(item, role)}`}
                       className={cn(
                         "block w-full truncate rounded px-1 py-px text-left text-[11px] leading-4.5",
-                        itemClass(item),
+                        itemClass(item, role),
+                        isDimmed(item, focus) && "opacity-30 saturate-50 hover:opacity-80",
                         canDrag(item, role) && !picking && "cursor-grab active:cursor-grabbing",
                         dragId === item.id && "opacity-40",
                         linked.has(item.id) && "ring-2 ring-zinc-900 ring-offset-1",

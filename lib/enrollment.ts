@@ -115,6 +115,22 @@ function generate(
     const hits = slots.filter((x) => x.status !== "SKIPPED" && overlaps(x.start, x.end, s, e));
     if (hits.some((x) => x.status !== "OPEN")) {
       conflicts.push({ start: s, end: e });
+      // 시간을 못 잡은 정규 레슨은 '미배정' 기록으로 남겨 보강 필요 횟수에 들어가게 한다
+      const missId = `miss-${enrollment.id}-${toDateKey(start).replaceAll("-", "")}-${pad(start.getHours())}${pad(start.getMinutes())}`;
+      slots = [
+        ...slots,
+        {
+          id: missId,
+          start: s,
+          end: e,
+          status: "SKIPPED",
+          skipReason: "CONFLICT",
+          studentId: enrollment.studentId,
+          lessonType: "REGULAR",
+          enrollmentId: enrollment.id,
+          threadId: `t-${missId}`,
+        },
+      ];
       continue;
     }
     if (hits.length > 0) {

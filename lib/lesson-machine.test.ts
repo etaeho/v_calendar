@@ -57,6 +57,7 @@ function seed(): LessonState {
       },
     ],
     enrollments: [],
+    makeupAdjustments: [],
     requests: [],
     comments: [],
   };

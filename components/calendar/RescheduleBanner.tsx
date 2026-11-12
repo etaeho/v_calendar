@@ -2,7 +2,10 @@
 
 import { ArrowRightLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { fmtDateTime } from "@/lib/calendar-items";
+import { fmtDateTime, useFocusStudent } from "@/lib/calendar-items";
+import { userName } from "@/lib/mock-data";
+import { studentColor } from "@/lib/student-colors";
+import { cn } from "@/lib/utils";
 import { useCalendarStore } from "@/store/calendar-store";
 
 /** 일정 변경 대상 선택 모드일 때 달력 위에 표시되는 안내 */
@@ -23,6 +26,33 @@ export function RescheduleBanner() {
       </p>
       <Button size="sm" onClick={() => openDrawer({ type: "slot", slotId: from.id })}>
         취소
+      </Button>
+    </div>
+  );
+}
+
+/** 강사 화면: 특정 레슨생 일정만 강조 중일 때 */
+export function FocusBanner() {
+  const focus = useFocusStudent();
+  const pinned = useCalendarStore((s) => s.focusStudentId);
+  const setFocusStudent = useCalendarStore((s) => s.setFocusStudent);
+  const closeDrawer = useCalendarStore((s) => s.closeDrawer);
+  const drawerType = useCalendarStore((s) => s.drawer.type);
+  if (!focus || drawerType === "reschedule") return null;
+  return (
+    <div className="flex items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-4 py-1.5 text-sm text-zinc-800">
+      <span className={cn("size-3 shrink-0 rounded-full", studentColor(focus)?.dot)} />
+      <p className="min-w-0 flex-1">
+        <strong>{userName(focus)}</strong> 일정만 강조해서 보는 중
+      </p>
+      <Button
+        size="sm"
+        onClick={() => {
+          setFocusStudent(null);
+          if (!pinned) closeDrawer();
+        }}
+      >
+        모두 보기
       </Button>
     </div>
   );

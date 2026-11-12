@@ -15,7 +15,9 @@ import {
   timesLabel,
   toDateKey,
 } from "@/lib/enrollment";
+import { makeupSummary } from "@/lib/lesson-machine";
 import { STUDENTS } from "@/lib/mock-data";
+import { studentColor } from "@/lib/student-colors";
 import { cn } from "@/lib/utils";
 import { useCalendarStore } from "@/store/calendar-store";
 import type { Enrollment, User, WeeklyTime } from "@/types/calendar";
@@ -107,7 +109,10 @@ function StudentCard({ student }: { student: User }) {
   return (
     <article className="rounded-xl border border-zinc-200 bg-white p-4">
       <header className="mb-2 flex items-center justify-between gap-2">
-        <h3 className="text-base font-bold">{student.name}</h3>
+        <h3 className="flex items-center gap-2 text-base font-bold">
+          <span className={cn("size-3 rounded-full", studentColor(student.id)?.dot)} aria-hidden />
+          {student.name}
+        </h3>
         {current.length === 0 && (
           <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">수강 등록 없음</span>
         )}
@@ -214,6 +219,8 @@ function StudentCard({ student }: { student: User }) {
           )
         )
       )}
+
+      <MakeupPanel student={student} />
 
       {past.length > 0 && (
         <p className="mt-3 border-t border-zinc-100 pt-2 text-xs text-zinc-500">
@@ -621,3 +628,92 @@ const FormActions = ({ onCancel, children }: { onCancel: () => void; children: R
     {children}
   </div>
 );
+
+/** 레슨생별 보강 현황과 강사 조정 */
+function MakeupPanel({ student }: { student: User }) {
+  const lesson = useCalendarStore((s) => s.lesson);
+  const now = useCalendarStore((s) => s.now);
+  const store = useCalendarStore.getState;
+  const [adjust, setAdjust] = useState<1 | -1 | null>(null);
+  const [reason, setReason] = useState("");
+  const m = makeupSummary(lesson, student.id, now);
+  const uid = `adj-${student.id}`;
+
+  return (
+    <section aria-label={`${student.name} 보강`} className="mt-3 border-t border-zinc-100 pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-semibold">보강</h4>
+        <p className="text-sm tabular-nums">
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 font-semibold",
+              m.remaining > 0 ? "bg-orange-100 text-orange-900" : "bg-zinc-100 text-zinc-700",
+            )}
+          >
+            {m.remaining >= 0 ? `남은 보강 ${m.remaining}회` : `추가 레슨 ${-m.remaining}회`}
+          </span>
+        </p>
+      </div>
+      <p className="mt-1 text-xs text-zinc-600 tabular-nums">
+        필요 {m.owed} · 완료 {m.done} · 예정 {m.scheduled}
+        {m.requested > 0 && ` · 신청 중 ${m.requested}`}
+      </p>
+
+      {m.entries.length > 0 && (
+        <ul className="mt-2 space-y-0.5 text-xs text-zinc-700">
+          {m.entries.slice(0, 4).map((e, i) => (
+            <li key={`${e.at}-${i}`} className="flex gap-2">
+              <span className={cn("w-6 shrink-0 font-semibold tabular-nums", e.delta > 0 ? "text-orange-800" : "text-mint-700")}>
+                {e.delta > 0 ? `+${e.delta}` : e.delta}
+              </span>
+              <span className="shrink-0 text-zinc-500 tabular-nums">{fmtDay(e.at)}</span>
+              <span className="min-w-0 truncate">{e.label}</span>
+            </li>
+          ))}
+          {m.entries.length > 4 && <li className="text-zinc-500">외 {m.entries.length - 4}건</li>}
+        </ul>
+      )}
+
+      {adjust === null ? (
+        <div className="mt-2 flex gap-2">
+          <Button size="sm" onClick={() => setAdjust(1)}>
+            보강 +1
+          </Button>
+          <Button size="sm" onClick={() => setAdjust(-1)}>
+            보강 −1
+          </Button>
+        </div>
+      ) : (
+        <form
+          className="mt-2 flex flex-wrap items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (store().adjustMakeup(student.id, adjust, reason)) {
+              setAdjust(null);
+              setReason("");
+            }
+          }}
+        >
+          <label className={cn(labelCls, "min-w-0 flex-1")} htmlFor={uid}>
+            {adjust > 0 ? "보강 1회 추가 사유" : "보강 1회 차감 사유"}
+            <input
+              id={uid}
+              autoFocus
+              required
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={adjust > 0 ? "예: 11/10 결석, 강사 사정 취소" : "예: 보강 없이 정리, 환불"}
+              className={cn(inputCls, "mt-1")}
+            />
+          </label>
+          <Button size="sm" onClick={() => setAdjust(null)}>
+            취소
+          </Button>
+          <Button type="submit" size="sm" variant="primary" disabled={!reason.trim()}>
+            저장
+          </Button>
+        </form>
+      )}
+    </section>
+  );
+}

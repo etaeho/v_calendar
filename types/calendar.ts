@@ -39,6 +39,23 @@ export type SlotStatus =
   /** 휴강 (공휴일 등으로 쉬기로 한 레슨). 시간을 점유하지 않고 기록으로만 남는다 */
   | "SKIPPED";
 
+/**
+ * 진행하지 못한 정규 레슨의 이유 (모두 '보강 필요'로 집계된다)
+ * - HOLIDAY : 공휴일 휴강
+ * - DEFERRED: 날짜를 못 정하고 보강으로 미룸
+ * - CONFLICT: 수강 등록 때 다른 일정과 겹쳐 시간을 잡지 못함
+ */
+export type SkipReason = "HOLIDAY" | "DEFERRED" | "CONFLICT";
+
+/** 강사가 직접 조정한 보강 필요 횟수 (+1 결석 보강, -1 보강 없이 정리 등) */
+export interface MakeupAdjustment {
+  id: string;
+  studentId: string;
+  delta: number;
+  reason: string;
+  createdAt: string;
+}
+
 /** 공휴일에 잡힌 레슨을 어떻게 할지: 미결정 / 그대로 진행 / 휴강 */
 export type HolidayDecision = "UNDECIDED" | "PROCEED" | "SKIP";
 
@@ -59,13 +76,16 @@ export interface LessonSlot {
   /** 레슨일이 공휴일이면 그 이름과 결정 상태 */
   holidayName?: string;
   holidayDecision?: HolidayDecision;
+  /** SKIPPED 인 경우 그 이유 */
+  skipReason?: SkipReason;
   /** 일정 변경으로 옮겨 온 레슨이면 원래 시작 시각 */
   movedFrom?: string;
   /** 댓글 스레드 id. 슬롯이 OPEN 으로 돌아가면 새 스레드로 교체되어 이전 대화가 노출되지 않는다 */
   threadId: string;
 }
 
-export type RequestKind = "BOOKING" | "CHANGE" | "HOLIDAY";
+/** DEFER: 레슨을 취소하고 '보강 필요'로 미루기 (새 날짜는 나중에 보강 신청으로 정함) */
+export type RequestKind = "BOOKING" | "CHANGE" | "HOLIDAY" | "DEFER";
 /** EXPIRED: 응답 없이 해당 시간이 지나 자동 종료된 요청 */
 export type RequestStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "EXPIRED";
 
@@ -149,6 +169,7 @@ export interface Enrollment {
 /** 레슨 도메인 전체 상태 (상태 머신의 입력/출력) */
 export interface LessonState {
   enrollments: Enrollment[];
+  makeupAdjustments: MakeupAdjustment[];
   slots: LessonSlot[];
   requests: ScheduleRequest[];
   comments: Comment[];
@@ -172,6 +193,8 @@ export type SlotDisplay =
   | "PENDING_CHANGE_TO"
   /** 공휴일 레슨: 진행/휴강/이동 결정이 필요 */
   | "HOLIDAY_DECISION"
+  /** 보강으로 미루기 요청이 상대방 응답을 기다리는 중 */
+  | "PENDING_DEFER"
   | "SKIPPED"
   | "CLOSED";
 

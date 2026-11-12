@@ -19,8 +19,13 @@ import {
   type HolidayLookup,
 } from "./enrollment.ts";
 import {
+  adjustMakeup,
   approveRequest,
+  cancelRequest,
   createOpenSlot,
+  makeupSummary,
+  proposeDefer,
+  proposeHoliday,
   getSlotViews,
   LessonError,
   planDrop,
@@ -43,7 +48,7 @@ function makeCtx(now = NOW): MachineContext {
 }
 const noHoliday: HolidayLookup = () => undefined;
 const christmas: HolidayLookup = (d) => (d.getMonth() === 11 && d.getDate() === 25 ? "크리스마스" : undefined);
-const empty = (): LessonState => ({ enrollments: [], slots: [], requests: [], comments: [] });
+const empty = (): LessonState => ({ enrollments: [], makeupAdjustments: [], slots: [], requests: [], comments: [] });
 const days = (list: { start: Date }[]) => list.map((x) => toDateKey(x.start));
 const throwsCode = (fn: () => unknown, code: string) =>
   assert.throws(fn, (e) => e instanceof LessonError && e.code === code);
@@ -254,5 +259,72 @@ describe("표시용 계산", () => {
     assert.equal(toDateKey(nextPaymentDate(longer, local(2026, 12, 1, 9))!), "2026-12-31");
     assert.equal(toDateKey(nextPaymentDate(longer, local(2027, 2, 1, 9))!), "2027-02-28");
     assert.equal(nextPaymentDate({ ...e, paymentDay: undefined }, NOW), undefined);
+  });
+});
+
+describe("보강 관리", () => {
+  it("공휴일 휴강 · 보강으로 미룸 · 미배정 · 강사 조정이 보강 필요로 집계된다", () => {
+    const ctx = makeCtx();
+    // 11/24 화요일 19:00 은 다른 레슨생 보강이 이미 있어 미배정
+    let st = createOpenSlot(empty(), teacher, { start: local(2026, 11, 24, 19), end: local(2026, 11, 24, 20) }, ctx).state;
+    st = approveRequest(requestBooking(st, s2, st.slots[0].id, ctx), teacher, "req-3", ctx);
+    st = registerEnrollment(st, teacher, input(), ctx, christmas).state;
+    const miss = st.slots.find((s) => s.status === "SKIPPED" && s.skipReason === "CONFLICT")!;
+    assert.equal(miss.start, local(2026, 11, 24, 19));
+    assert.equal(getSlotViews(st, s2).some((v) => v.slot.id === miss.id), false);
+    assert.equal(makeupSummary(st, "s1", NOW).owed, 1);
+
+    // 보강으로 미루기: 레슨생 요청 → 강사 동의
+    const dec8 = st.slots.find((s) => s.start === local(2026, 12, 8, 19))!.id;
+    st = proposeDefer(st, s1, dec8, ctx, "학교 행사");
+    assert.equal(getSlotViews(st, s1).find((v) => v.slot.id === dec8)!.display, "PENDING_DEFER");
+    throwsCode(() => approveRequest(st, s1, st.requests.at(-1)!.id, ctx), "FORBIDDEN");
+    st = approveRequest(st, teacher, st.requests.at(-1)!.id, ctx);
+    assert.equal(st.slots.find((s) => s.id === dec8)!.skipReason, "DEFERRED");
+
+    // 강사 조정 +1 (결석), 보강 레슨 1회 확정 → 남은 보강 = 3 - 1
+    st = adjustMakeup(st, teacher, "s1", 1, "11/10 결석", ctx);
+    throwsCode(() => adjustMakeup(st, s1, "s1", 1, "x", ctx), "FORBIDDEN");
+    throwsCode(() => adjustMakeup(st, teacher, "s1", 1, "  ", ctx), "INVALID_RANGE");
+    st = createOpenSlot(st, teacher, { start: local(2026, 11, 20, 15), end: local(2026, 11, 20, 16) }, ctx).state;
+    const open = st.slots.find((s) => s.status === "OPEN")!.id;
+    st = requestBooking(st, s1, open, ctx);
+    assert.equal(makeupSummary(st, "s1", NOW).requested, 1);
+    st = approveRequest(st, teacher, st.requests.at(-1)!.id, ctx);
+    const sum = makeupSummary(st, "s1", NOW);
+    assert.deepEqual(
+      { owed: sum.owed, done: sum.done, scheduled: sum.scheduled, requested: sum.requested, remaining: sum.remaining },
+      { owed: 3, done: 0, scheduled: 1, requested: 0, remaining: 2 },
+    );
+    assert.deepEqual(sum.entries.map((e) => e.label), ["보강으로 미룸", "일정 겹침 · 미배정", "강사 조정 · 11/10 결석"]);
+    // 레슨 시간이 지나면 완료로 바뀐다
+    assert.equal(makeupSummary(st, "s1", local(2026, 11, 21, 9)).done, 1);
+  });
+
+  it("공휴일 휴강도 보강 필요가 되고, 미루기 요청은 취소·마감 규칙을 따른다", () => {
+    const ctx = makeCtx();
+    let st = registerEnrollment(
+      empty(),
+      teacher,
+      input({ studentId: "s4", times: [fri16], weeks: [2, 4], changeDeadlineHours: 48 }),
+      ctx,
+      christmas,
+    ).state;
+    const xmas = st.slots.find((s) => s.holidayDecision === "UNDECIDED")!.id;
+    st = proposeHoliday(st, teacher, xmas, "SKIP", ctx);
+    st = approveRequest(st, { userId: "s4", role: "STUDENT" }, st.requests[0].id, ctx);
+    assert.equal(makeupSummary(st, "s4", NOW).owed, 1);
+    assert.equal(makeupSummary(st, "s4", NOW).entries[0].label, "공휴일 휴강 (크리스마스)");
+
+    const s4: Actor = { userId: "s4", role: "STUDENT" };
+    const next = st.slots.find((s) => s.start === local(2026, 11, 27, 16))!.id;
+    let d = proposeDefer(st, teacher, next, ctx);
+    throwsCode(() => proposeDefer(d, teacher, next, ctx), "INVALID_STATE");
+    d = cancelRequest(d, teacher, d.requests.at(-1)!.id, ctx);
+    assert.equal(d.slots.find((s) => s.id === next)!.status, "CONFIRMED");
+    // 48시간 마감: 11/26 09:00 기준 11/27 16:00 은 31시간 전 → 레슨생은 불가, 강사는 가능
+    const late = makeCtx(local(2026, 11, 26, 9));
+    throwsCode(() => proposeDefer(st, s4, next, late), "INVALID_STATE");
+    assert.equal(proposeDefer(st, teacher, next, late).requests.at(-1)!.kind, "DEFER");
   });
 });

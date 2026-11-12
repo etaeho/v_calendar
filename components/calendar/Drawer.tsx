@@ -10,6 +10,7 @@ import {
   Check,
   ChevronRight,
   ClipboardList,
+  Clock,
   Hourglass,
   Lock,
   MessageCircle,
@@ -49,6 +50,8 @@ import {
   changeDeadlinePassed,
   enrollmentEndMs,
   enrollmentOf,
+  makeupSummary,
+  SKIP_REASON_LABEL,
 } from "@/lib/lesson-machine";
 import { INSTRUCTOR, userName } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
@@ -170,7 +173,7 @@ function DayPanel({ date }: { date: string }) {
                 onClick={() => onItemClick(item)}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm",
-                  itemClass(item),
+                  itemClass(item, role),
                 )}
               >
                 <span className="shrink-0 tabular-nums opacity-85">
@@ -521,10 +524,17 @@ function SlotPanel({ slotId }: { slotId: string }) {
           )}
 
           {display === "SKIPPED" && (
-            <Hint>
-              {slot.holidayName ? `${slot.holidayName}이라 ` : ""}쉬기로 한 레슨입니다. 이 시간은 비어 있는 것으로
-              처리됩니다.
-            </Hint>
+            <p className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+              <strong className="text-zinc-900">
+                {SKIP_REASON_LABEL[slot.skipReason ?? "HOLIDAY"]}
+                {slot.holidayName ? ` (${slot.holidayName})` : ""}
+              </strong>
+              <br />
+              {slot.skipReason === "CONFLICT"
+                ? "수강 등록 때 다른 일정과 겹쳐 시간을 잡지 못한 레슨입니다. "
+                : "진행하지 않는 레슨입니다. "}
+              보강 필요 1회로 집계되며, 이 시간은 비어 있는 것으로 처리됩니다.
+            </p>
           )}
 
           {display === "CONFIRMED" && isEnded && <Hint>이미 끝난 레슨이라 일정을 변경할 수 없습니다.</Hint>}
@@ -547,6 +557,7 @@ function SlotPanel({ slotId }: { slotId: string }) {
                   ? "빈 슬롯을 고르거나 달력에서 레슨을 끌어 놓으면, 레슨생의 동의 후 확정됩니다."
                   : "빈 슬롯을 고르거나 달력에서 레슨을 빈 슬롯 위로 끌어 놓으면, 강사의 승인 후 확정됩니다."}
               </Hint>
+              {slot.lessonType === "REGULAR" && <DeferBox slotId={slot.id} />}
             </section>
           )}
 
@@ -674,6 +685,15 @@ function RequestCard({ view, views }: { view: SlotView; views: SlotView[] }) {
           </div>
         )}
 
+        {request.kind === "DEFER" && (
+          <p className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-zinc-800">
+            <span className="mb-0.5 block text-[11px] font-semibold text-orange-800">보강으로 미루기</span>
+            이 레슨을 취소하고 <strong>보강 필요 1회</strong>로 돌립니다. 새 날짜는 나중에 보강 신청으로 정합니다.
+          </p>
+        )}
+
+        {request.kind === "BOOKING" && role === "INSTRUCTOR" && <MakeupBalance studentId={request.studentId} />}
+
         {request.kind === "HOLIDAY" && (
           <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-zinc-800">
             <span className="mb-0.5 block text-[11px] font-semibold text-red-700">
@@ -742,7 +762,9 @@ function RequestCard({ view, views }: { view: SlotView; views: SlotView[] }) {
               ? "보강 신청 취소"
               : request.kind === "HOLIDAY"
                 ? "제안 취소"
-                : "변경 요청 취소"}
+                : request.kind === "DEFER"
+                  ? "미루기 요청 취소"
+                  : "변경 요청 취소"}
           </Button>
         )}
       </div>
@@ -778,6 +800,79 @@ const RESULT_LABEL = {
   CANCELLED: { text: "취소", cls: "bg-zinc-100 text-zinc-700" },
   EXPIRED: { text: "만료", cls: "bg-zinc-100 text-zinc-700" },
 } as const;
+
+/** 보강 신청 승인 전에 강사가 보는 레슨생의 남은 보강 */
+function MakeupBalance({ studentId }: { studentId: string }) {
+  const lesson = useCalendarStore((s) => s.lesson);
+  const now = useCalendarStore((s) => s.now);
+  const m = makeupSummary(lesson, studentId, now);
+  // 이 신청을 승인하면 남은 보강이 하나 줄어든다
+  const after = m.remaining - 1;
+  return (
+    <p
+      className={cn(
+        "rounded-lg px-3 py-2 text-xs",
+        after < 0 ? "border border-amber-300 bg-amber-50 text-amber-950" : "bg-zinc-50 text-zinc-700",
+      )}
+    >
+      {userName(studentId)} 보강: 필요 {m.owed} · 완료 {m.done} · 예정 {m.scheduled} →{" "}
+      <strong>남은 보강 {m.remaining}회</strong>
+      {after < 0 && (
+        <span className="mt-0.5 block">
+          남은 보강이 없어, 승인하면 <strong>추가 레슨</strong>이 됩니다.
+        </span>
+      )}
+    </p>
+  );
+}
+
+/** 확정된 정규 레슨을 날짜를 정하지 않고 '보강 필요'로 미루자고 요청 */
+function DeferBox({ slotId }: { slotId: string }) {
+  const role = useCalendarStore((s) => s.role);
+  const store = useCalendarStore.getState;
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState("");
+  if (!open)
+    return (
+      <Button variant="ghost" size="sm" className="w-full text-xs" onClick={() => setOpen(true)}>
+        <Clock />
+        날짜를 아직 못 정하면: 보강으로 미루기
+      </Button>
+    );
+  return (
+    <div className="space-y-2 rounded-xl border border-orange-200 bg-orange-50 p-3">
+      <p className="text-xs text-orange-950">
+        이 레슨을 취소하고 <strong>보강 필요 1회</strong>로 돌립니다. 새 날짜는 나중에 보강 신청으로 정합니다.{" "}
+        {role === "INSTRUCTOR" ? "레슨생이 동의하면" : "강사가 동의하면"} 확정됩니다.
+      </p>
+      <textarea
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        placeholder="사유 (선택)"
+        aria-label="보강으로 미루는 사유"
+        rows={2}
+        className="w-full resize-none rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm placeholder:text-zinc-400"
+      />
+      <div className="flex gap-2">
+        <Button size="sm" className="flex-1" onClick={() => setOpen(false)}>
+          돌아가기
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          className="flex-1"
+          onClick={() => {
+            store().proposeDefer(slotId, message);
+            setOpen(false);
+            setMessage("");
+          }}
+        >
+          미루기 요청 보내기
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /** 일정 변경 시 알아 둘 점: 달이 바뀌어 월별 횟수가 달라지는 경우, 옮길 날이 공휴일인 경우 */
 function ChangeWarnings({ from, toStart }: { from: LessonSlot; toStart: string }) {

@@ -11,6 +11,8 @@ import {
   LessonError,
   moveOpenSlot,
   planDrop,
+  adjustMakeup,
+  proposeDefer,
   proposeHoliday,
   rejectRequest,
   requestBooking,
@@ -117,6 +119,13 @@ interface CalendarStore {
   reject: (requestId: string, reason?: string) => void;
   cancel: (requestId: string) => void;
   comment: (slotId: string, body: string) => void;
+  /** 강사 화면: 이 레슨생의 일정만 강조 (null = 전체) */
+  focusStudentId: string | null;
+  setFocusStudent: (studentId: string | null) => void;
+  /** 정규 레슨을 보강으로 미루기 요청 */
+  proposeDefer: (slotId: string, message?: string) => void;
+  /** 강사: 보강 필요 횟수 조정 */
+  adjustMakeup: (studentId: string, delta: number, reason: string) => boolean;
   /** 공휴일 레슨: 그대로 진행 / 휴강 제안 */
   proposeHoliday: (slotId: string, proposal: "PROCEED" | "SKIP", message?: string) => void;
 
@@ -167,7 +176,13 @@ export function useActor(): Actor {
 
 export const syncKey = (userId: string, provider: ExternalProvider) => `${userId}:${provider}`;
 
-const emptyLesson: LessonState = { enrollments: [], slots: [], requests: [], comments: [] };
+const emptyLesson: LessonState = {
+  enrollments: [],
+  makeupAdjustments: [],
+  slots: [],
+  requests: [],
+  comments: [],
+};
 
 export const useCalendarStore = create<CalendarStore>((set, get) => {
   const toast = (kind: Toast["kind"], message: string) =>
@@ -197,7 +212,11 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     fn: (
       state: LessonState,
       actor: Actor,
-    ) => { state: LessonState; created: number; conflicts: GenerationConflict[] },
+    ) => {
+      state: LessonState;
+      created: number;
+      conflicts: GenerationConflict[];
+    },
     success: (created: number) => string,
   ): boolean => {
     let result: { created: number; conflicts: GenerationConflict[] } | undefined;
@@ -260,7 +279,10 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     tick: () => {
       const now = new Date().toISOString();
       // 시간이 지난 요청 만료, 미결정 공휴일 레슨 휴강 처리, 새로 지정된 공휴일 표시
-      set((s) => ({ now, lesson: settle(markHolidays(s.lesson, holidayLookup, now), ctx) }));
+      set((s) => ({
+        now,
+        lesson: settle(markHolidays(s.lesson, holidayLookup, now), ctx),
+      }));
     },
 
     resetDemo: () => {
@@ -268,6 +290,7 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       set({
         lesson: settle(createInitialLessonState(now, holidayLookup), ctx),
         conflicts: [],
+        focusStudentId: null,
         externalEvents: [],
         sync: {},
         drawer: { type: "closed" },
@@ -281,13 +304,25 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       // 선택 모드·개인 일정 상세는 역할이 바뀌면 의미가 없으므로 닫는다
       const keep = drawer.type === "slot" || drawer.type === "day";
       const view = role === "STUDENT" && get().view === "students" ? "week" : get().view;
-      set({ role, view, toast: null, drawer: keep ? drawer : { type: "closed" } });
+      set({
+        role,
+        view,
+        toast: null,
+        focusStudentId: null,
+        drawer: keep ? drawer : { type: "closed" },
+      });
     },
     setStudent: (studentId) => {
       const { drawer } = get();
       const keep = drawer.type === "slot" || drawer.type === "day";
       const view = get().view === "students" ? "week" : get().view;
-      set({ studentId, role: "STUDENT", view, toast: null, drawer: keep ? drawer : { type: "closed" } });
+      set({
+        studentId,
+        role: "STUDENT",
+        view,
+        toast: null,
+        drawer: keep ? drawer : { type: "closed" },
+      });
     },
     setView: (view) => set({ view }),
     setCursor: (date) => set({ cursor: date.toISOString() }),
@@ -301,7 +336,9 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       const userId = actorFromState(get()).userId;
       const key = syncKey(userId, provider);
       if (get().sync[key]?.status === "syncing") return;
-      set((s) => ({ sync: { ...s.sync, [key]: { ...s.sync[key], status: "syncing" } } }));
+      set((s) => ({
+        sync: { ...s.sync, [key]: { ...s.sync[key], status: "syncing" } },
+      }));
       try {
         const events = await calendarSyncServices[provider].fetchEvents(userId);
         set((s) => ({
@@ -364,7 +401,9 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
         toast("error", "지난 시간으로는 옮길 수 없습니다.");
         return;
       }
-      set({ drawer: { type: "reschedule", fromSlotId: drawer.fromSlotId, toSlotId } });
+      set({
+        drawer: { type: "reschedule", fromSlotId: drawer.fromSlotId, toSlotId },
+      });
     },
 
     submitReschedule: (message) => {
@@ -398,7 +437,13 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
           return;
         case "change":
           // 바로 보내지 않고 확인 화면(사유 입력)을 연다
-          set({ drawer: { type: "reschedule", fromSlotId: slotId, toSlotId: plan.toSlotId } });
+          set({
+            drawer: {
+              type: "reschedule",
+              fromSlotId: slotId,
+              toSlotId: plan.toSlotId,
+            },
+          });
           return;
         case "change-new":
           set({
@@ -416,15 +461,17 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       const request = get().lesson.requests.find((r) => r.id === requestId);
       const ok = transition(
         (s, a) => approveRequest(s, a, requestId, ctx),
-        request?.kind === "HOLIDAY"
-          ? request.holidayProposal === "SKIP"
-            ? "동의했습니다. 이 날 레슨은 쉽니다(휴강)."
-            : "동의했습니다. 공휴일이지만 레슨을 진행합니다."
-          : get().role === "STUDENT"
-            ? "동의했습니다. 새 시간으로 레슨이 확정되었습니다."
-            : "승인했습니다. 레슨이 확정되었습니다.",
+        request?.kind === "DEFER"
+          ? "동의했습니다. 이 레슨은 보강으로 미뤘습니다 (보강 필요 1회)."
+          : request?.kind === "HOLIDAY"
+            ? request.holidayProposal === "SKIP"
+              ? "동의했습니다. 이 날 레슨은 쉽니다(휴강)."
+              : "동의했습니다. 공휴일이지만 레슨을 진행합니다."
+            : get().role === "STUDENT"
+              ? "동의했습니다. 새 시간으로 레슨이 확정되었습니다."
+              : "승인했습니다. 레슨이 확정되었습니다.",
       );
-      if (ok && request && request.kind !== "HOLIDAY") {
+      if (ok && request && request.kind !== "HOLIDAY" && request.kind !== "DEFER") {
         pushConfirmed(request.toSlotId);
         // 변경 승인 시 기존 슬롯은 OPEN 이 되므로, 확정된 새 슬롯을 보여준다
         const { drawer } = get();
@@ -445,10 +492,7 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
 
     cancel: (requestId) => {
       const request = get().lesson.requests.find((r) => r.id === requestId);
-      const ok = transition(
-        (s, a) => cancelRequest(s, a, requestId, ctx),
-        "요청을 취소했습니다.",
-      );
+      const ok = transition((s, a) => cancelRequest(s, a, requestId, ctx), "요청을 취소했습니다.");
       if (ok && request) afterRevert(request.kind, request.fromSlotId, request.toSlotId);
     },
 
@@ -467,6 +511,22 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
 
     conflicts: [],
     clearConflicts: () => set({ conflicts: [] }),
+
+    focusStudentId: null,
+    setFocusStudent: (studentId) => set({ focusStudentId: studentId }),
+
+    proposeDefer: (slotId, message) => {
+      transition(
+        (s, a) => proposeDefer(s, a, slotId, ctx, message),
+        "보강으로 미루기를 요청했습니다. 상대방의 동의를 기다려 주세요.",
+      );
+    },
+
+    adjustMakeup: (studentId, delta, reason) =>
+      transition(
+        (s, a) => adjustMakeup(s, a, studentId, delta, reason, ctx),
+        `보강 필요 횟수를 ${delta > 0 ? `${delta}회 늘렸습니다` : `${-delta}회 줄였습니다`}.`,
+      ),
 
     registerEnrollment: (input) =>
       generateWith(

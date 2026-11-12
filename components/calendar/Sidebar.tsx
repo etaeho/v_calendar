@@ -21,8 +21,9 @@ import {
   timesLabel,
 } from "@/lib/enrollment";
 import { CALENDARS } from "@/lib/calendars";
-import { canCancel, canResolve } from "@/lib/lesson-machine";
-import { userName } from "@/lib/mock-data";
+import { canCancel, canResolve, makeupSummary } from "@/lib/lesson-machine";
+import { studentColor } from "@/lib/student-colors";
+import { STUDENTS, userName } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 import { syncKey, useActor, useCalendarStore } from "@/store/calendar-store";
 import type { ExternalProvider, ScheduleRequest, SlotDisplay, UserRole } from "@/types/calendar";
@@ -38,6 +39,7 @@ const LEGEND: { display: SlotDisplay; label: string; hint: string }[] = [
 
 const describe = (r: ScheduleRequest, role: UserRole) => {
   const who = role === "INSTRUCTOR" ? `${userName(r.studentId)} · ` : "";
+  if (r.kind === "DEFER") return `${who}${fmtDateTime(r.toStart)} 레슨 → 보강으로`;
   if (r.kind === "HOLIDAY")
     return `${who}${fmtDateTime(r.toStart)} · ${r.holidayProposal === "SKIP" ? "휴강" : "그대로 진행"} 제안`;
   return r.kind === "BOOKING"
@@ -69,6 +71,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const openDrawer = useCalendarStore((s) => s.openDrawer);
   const setCursor = useCalendarStore((s) => s.setCursor);
   const resetDemo = useCalendarStore((s) => s.resetDemo);
+  const focusStudentId = useCalendarStore((s) => s.focusStudentId);
+  const setFocusStudent = useCalendarStore((s) => s.setFocusStudent);
 
   const actor = useActor();
   const allOn = CALENDARS.every((c) => filters[c.id]);
@@ -217,6 +221,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                       : "제한 없음"}
                   </dd>
                 </div>
+                <MakeupRow studentId={plan.studentId} />
                 {plan.fee !== undefined && (
                   <div className="flex justify-between gap-2">
                     <dt className="text-zinc-500">결제 예정</dt>
@@ -309,6 +314,55 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           </section>
         )}
 
+        {role === "INSTRUCTOR" && (
+          <section aria-label="레슨생">
+            <h2 className="mb-2 flex items-center justify-between text-xs font-semibold text-zinc-500">
+              레슨생 · 남은 보강
+              {focusStudentId && (
+                <button
+                  type="button"
+                  onClick={() => setFocusStudent(null)}
+                  className="rounded px-1.5 py-0.5 text-[11px] font-medium text-mint-700 hover:bg-mint-50"
+                >
+                  모두 보기
+                </button>
+              )}
+            </h2>
+            <ul className="space-y-0.5">
+              {STUDENTS.map((st) => {
+                const m = makeupSummary(lesson, st.id, now);
+                const active = focusStudentId === st.id;
+                return (
+                  <li key={st.id}>
+                    <button
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setFocusStudent(active ? null : st.id)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-zinc-50",
+                        active && "bg-zinc-100 font-semibold",
+                      )}
+                    >
+                      <span className={cn("size-3 shrink-0 rounded-full", studentColor(st.id)?.dot)} />
+                      <span className="flex-1">{st.name}</span>
+                      <span
+                        className={cn(
+                          "rounded-full px-1.5 text-[11px] tabular-nums",
+                          m.remaining > 0 ? "bg-orange-100 font-semibold text-orange-900" : "text-zinc-400",
+                        )}
+                        title={`보강 필요 ${m.owed} · 완료 ${m.done} · 예정 ${m.scheduled}`}
+                      >
+                        {m.remaining > 0 ? `보강 ${m.remaining}` : m.remaining < 0 ? `추가 ${-m.remaining}` : "0"}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="mt-1 px-2 text-[11px] text-zinc-500">이름을 누르면 그 레슨생 일정만 강조합니다.</p>
+          </section>
+        )}
+
         <section>
           <h2 className="mb-2 text-xs font-semibold text-zinc-500">레슨 상태</h2>
           <ul className="space-y-1.5">
@@ -383,5 +437,25 @@ function RequestList({
         </li>
       ))}
     </ul>
+  );
+}
+
+/** 레슨생 '내 수강' 카드의 보강 현황 */
+function MakeupRow({ studentId }: { studentId: string }) {
+  const lesson = useCalendarStore((s) => s.lesson);
+  const now = useCalendarStore((s) => s.now);
+  const m = makeupSummary(lesson, studentId, now);
+  return (
+    <div className="flex justify-between gap-2">
+      <dt className="text-zinc-500">보강</dt>
+      <dd className="text-right tabular-nums">
+        <span className={cn(m.remaining > 0 && "font-semibold text-orange-800")}>남은 {Math.max(m.remaining, 0)}회</span>
+        <span className="text-zinc-500">
+          {" "}
+          · 예정 {m.scheduled}
+          {m.requested > 0 && ` · 신청 중 ${m.requested}`}
+        </span>
+      </dd>
+    </div>
   );
 }

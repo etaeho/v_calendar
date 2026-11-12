@@ -5,6 +5,7 @@ import { ko } from "date-fns/locale";
 import { useMemo } from "react";
 import { getSlotViews, overlaps } from "@/lib/lesson-machine";
 import { userName } from "@/lib/mock-data";
+import { studentColor } from "@/lib/student-colors";
 import { useActor, useCalendarStore } from "@/store/calendar-store";
 import type { ExternalEvent, SlotDisplay, SlotView, UserRole } from "@/types/calendar";
 
@@ -134,6 +135,7 @@ export const SLOT_STYLES: Record<SlotDisplay, string> = {
   PENDING_CHANGE_TO: "border-marching bg-white text-violet-900",
   // 공휴일 결정 필요: 승인 대기와 같은 노랑 계열 (태그로 구분)
   HOLIDAY_DECISION: "border-2 border-amber-600 bg-amber-300 text-amber-950 animate-pending",
+  PENDING_DEFER: "border-2 border-amber-600 bg-amber-300 text-amber-950 animate-pending",
   SKIPPED: "border border-dashed border-zinc-300 bg-zinc-50 text-zinc-500 line-through",
   CLOSED: "border border-zinc-200 bg-closed-stripes text-zinc-500",
 };
@@ -159,6 +161,7 @@ export const STATUS_LABEL: Record<SlotDisplay, string> = {
   PENDING_CHANGE_FROM: "변경 요청 · 기존 시간",
   PENDING_CHANGE_TO: "변경 요청 · 희망 시간",
   HOLIDAY_DECISION: "공휴일 · 결정 필요",
+  PENDING_DEFER: "보강으로 미루기 · 응답 대기",
   SKIPPED: "휴강",
   CLOSED: "마감",
 };
@@ -171,6 +174,12 @@ export function slotTitle(view: SlotView, role: UserRole): string {
   // 정규 레슨 회차 (예: 3/4)
   const seq = view.seq ? ` ${view.seq.n}/${view.seq.total}` : "";
   const holiday = view.slot.holidayName ?? "공휴일";
+  const skippedLabel =
+    view.slot.skipReason === "DEFERRED"
+      ? "보강으로 미룸"
+      : view.slot.skipReason === "CONFLICT"
+        ? "미배정 (일정 겹침)"
+        : `휴강 (${holiday})`;
   if (role === "INSTRUCTOR") {
     const name = userName(view.slot.studentId);
     switch (view.display) {
@@ -180,8 +189,10 @@ export function slotTitle(view: SlotView, role: UserRole): string {
         return `${name} ${makeup ? "보강" : `레슨${seq}`}`;
       case "HOLIDAY_DECISION":
         return `${name} · ${holiday} 결정 필요`;
+      case "PENDING_DEFER":
+        return `${name} 보강 미루기 요청`;
       case "SKIPPED":
-        return `${name} 휴강 (${holiday})`;
+        return `${name} ${skippedLabel}`;
       case "PENDING_BOOKING":
         return `${name} 보강 신청`;
       case "PENDING_CHANGE_FROM":
@@ -199,8 +210,10 @@ export function slotTitle(view: SlotView, role: UserRole): string {
       return makeup ? "내 보강 레슨" : `내 레슨${seq}`;
     case "HOLIDAY_DECISION":
       return `${holiday} 레슨 결정 필요`;
+    case "PENDING_DEFER":
+      return "보강 미루기 요청 중";
     case "SKIPPED":
-      return `휴강 (${holiday})`;
+      return skippedLabel;
     case "PENDING_BOOKING":
       return "보강 승인 대기";
     case "PENDING_CHANGE_FROM":
@@ -215,17 +228,47 @@ export function slotTitle(view: SlotView, role: UserRole): string {
 export const itemTitle = (item: CalendarItem, role: UserRole) =>
   item.kind === "external" ? item.event.title : slotTitle(item.view, role);
 
-export const itemClass = (item: CalendarItem) =>
-  item.kind === "external" ? EXTERNAL_STYLES[item.event.provider] : SLOT_STYLES[item.view.display];
+/** 강사 화면에서는 레슨생별로 확정 레슨 색을 조금씩 다르게, 다른 상태는 왼쪽 띠로 구분한다 */
+export const itemClass = (item: CalendarItem, role: UserRole) => {
+  if (item.kind === "external") return EXTERNAL_STYLES[item.event.provider];
+  const base = SLOT_STYLES[item.view.display];
+  const color = role === "INSTRUCTOR" ? studentColor(item.view.slot.studentId) : undefined;
+  if (!color || item.view.display === "OPEN") return base;
+  if (item.view.display === "CONFIRMED") return `${base} ${color.fill}`;
+  return `${base} ${color.stripe}`;
+};
+
+/** 강조 중인 레슨생이 있으면 그 레슨생의 레슨만 또렷하게, 나머지는 흐리게 */
+export function useFocusStudent(): string | null {
+  const role = useCalendarStore((s) => s.role);
+  const pinned = useCalendarStore((s) => s.focusStudentId);
+  const drawer = useCalendarStore((s) => s.drawer);
+  const slots = useCalendarStore((s) => s.lesson.slots);
+  if (role !== "INSTRUCTOR") return null;
+  if (pinned) return pinned;
+  const slotId =
+    drawer.type === "slot" ? drawer.slotId : drawer.type === "reschedule" ? drawer.fromSlotId : undefined;
+  return (slotId && slots.find((s) => s.id === slotId)?.studentId) || null;
+}
+
+export const isDimmed = (item: CalendarItem, focus: string | null) =>
+  !!focus && !(item.kind === "slot" && item.view.slot.studentId === focus);
 
 /** 요청 종류 이름 */
 export const requestKindLabel = (r: { kind: string }) =>
-  r.kind === "BOOKING" ? "보강 신청" : r.kind === "HOLIDAY" ? "공휴일 결정" : "일정 변경";
+  r.kind === "BOOKING"
+    ? "보강 신청"
+    : r.kind === "HOLIDAY"
+      ? "공휴일 결정"
+      : r.kind === "DEFER"
+        ? "보강 미루기"
+        : "일정 변경";
 
 export const REQUEST_KIND_CHIP: Record<string, string> = {
   BOOKING: "bg-amber-200 text-amber-950",
   CHANGE: "bg-violet-100 text-violet-900",
   HOLIDAY: "bg-red-100 text-red-800",
+  DEFER: "bg-orange-100 text-orange-900",
 };
 
 export const won = (n: number) => `${n.toLocaleString("ko-KR")}원`;

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Drawer } from "@/components/calendar/Drawer";
 import { Header } from "@/components/calendar/Header";
 import { MonthView } from "@/components/calendar/MonthView";
-import { RescheduleBanner } from "@/components/calendar/RescheduleBanner";
+import { FocusBanner, RescheduleBanner } from "@/components/calendar/RescheduleBanner";
 import { Sidebar } from "@/components/calendar/Sidebar";
 import { StudentsView } from "@/components/calendar/StudentsView";
 import { ToastHost } from "@/components/calendar/ToastHost";
@@ -47,6 +47,7 @@ export function CalendarApp() {
         <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
         <main className="flex min-w-0 flex-1 flex-col">
           <RescheduleBanner />
+          {view !== "students" && <FocusBanner />}
           {view === "students" ? <StudentsView /> : view === "month" ? <MonthView /> : <WeekView />}
         </main>
         {drawerOpen && <Drawer />}
