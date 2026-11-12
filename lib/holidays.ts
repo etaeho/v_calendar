@@ -13,8 +13,16 @@ export interface Holiday {
   dayOff: boolean;
 }
 
+/**
+ * 구글 공개 캘린더에 빠져 있는 공휴일 보완 (설 연휴 첫날이 토요일인 해 등).
+ * 데이터 소스에 해당 날짜가 생기면 중복되지 않도록 아래에서 걸러진다.
+ */
+const SUPPLEMENT: Holiday[] = [{ date: "2027-02-06", name: "설날 연휴", dayOff: true }];
+
 const byDate = new Map<string, Holiday[]>();
-for (const h of data as Holiday[]) {
+const source = data as Holiday[];
+const all = [...source, ...SUPPLEMENT.filter((x) => !source.some((h) => h.date === x.date && h.dayOff))];
+for (const h of all) {
   const list = byDate.get(h.date);
   if (list) list.push(h);
   else byDate.set(h.date, [h]);

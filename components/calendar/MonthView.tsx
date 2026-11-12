@@ -190,7 +190,7 @@ export function MonthView() {
                       className={cn(
                         "block w-full truncate rounded px-1 py-px text-left text-[11px] leading-4.5",
                         itemClass(item, role),
-                        isDimmed(item, focus) && "opacity-30 saturate-50 hover:opacity-80",
+                        isDimmed(item, focus, picking) && "opacity-45 hover:opacity-90",
                         canDrag(item, role) && !picking && "cursor-grab active:cursor-grabbing",
                         dragId === item.id && "opacity-40",
                         linked.has(item.id) && "ring-2 ring-zinc-900 ring-offset-1",

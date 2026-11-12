@@ -129,7 +129,7 @@ export function useItemClick() {
  */
 export const SLOT_STYLES: Record<SlotDisplay, string> = {
   OPEN: "border border-mint-500 bg-white text-mint-700",
-  CONFIRMED: "border border-mint-700 bg-mint-600 text-white",
+  CONFIRMED: "border border-mint-800 bg-mint-700 text-white",
   PENDING_BOOKING: "border-2 border-amber-600 bg-amber-300 text-amber-950 animate-pending",
   PENDING_CHANGE_FROM: "border-marching bg-violet-100 text-violet-950",
   PENDING_CHANGE_TO: "border-marching bg-white text-violet-900",
@@ -245,14 +245,22 @@ export function useFocusStudent(): string | null {
   const drawer = useCalendarStore((s) => s.drawer);
   const slots = useCalendarStore((s) => s.lesson.slots);
   if (role !== "INSTRUCTOR") return null;
-  if (pinned) return pinned;
+  // 지금 열어 본 레슨의 레슨생이 고정해 둔 레슨생보다 우선한다
   const slotId =
     drawer.type === "slot" ? drawer.slotId : drawer.type === "reschedule" ? drawer.fromSlotId : undefined;
-  return (slotId && slots.find((s) => s.id === slotId)?.studentId) || null;
+  return (slotId && slots.find((s) => s.id === slotId)?.studentId) || pinned || null;
 }
 
-export const isDimmed = (item: CalendarItem, focus: string | null) =>
-  !!focus && !(item.kind === "slot" && item.view.slot.studentId === focus);
+/**
+ * 강조 중인 레슨생이 아닌 항목은 흐리게.
+ * 일정 변경 대상을 고르는 중에는 고를 수 있는 빈 슬롯은 흐리게 하지 않는다.
+ */
+export const isDimmed = (item: CalendarItem, focus: string | null, picking = false) => {
+  if (!focus) return false;
+  if (item.kind !== "slot") return true;
+  if (picking && item.view.display === "OPEN") return false;
+  return item.view.slot.studentId !== focus;
+};
 
 /** 요청 종류 이름 */
 export const requestKindLabel = (r: { kind: string }) =>

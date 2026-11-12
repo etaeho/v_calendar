@@ -25,10 +25,10 @@ import type { Enrollment, User, WeeklyTime } from "@/types/calendar";
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
 const WEEK_PATTERNS: { id: string; label: string; weeks: number[] }[] = [
-  { id: "weekly", label: "매주 (5번째 주는 쉼)", weeks: [1, 2, 3, 4] },
-  { id: "odd", label: "격주 · 1·3번째 주", weeks: [1, 3] },
-  { id: "even", label: "격주 · 2·4번째 주", weeks: [2, 4] },
-  { id: "every", label: "매주 (5번째 주도 진행)", weeks: [1, 2, 3, 4, 5] },
+  { id: "weekly", label: "매주 (5주차 쉼)", weeks: [1, 2, 3, 4] },
+  { id: "odd", label: "격주 1·3주", weeks: [1, 3] },
+  { id: "even", label: "격주 2·4주", weeks: [2, 4] },
+  { id: "every", label: "매주 (5주차 포함)", weeks: [1, 2, 3, 4, 5] },
 ];
 const patternOf = (weeks: number[]) =>
   WEEK_PATTERNS.find((p) => p.weeks.join() === weeks.join())?.id ?? "weekly";

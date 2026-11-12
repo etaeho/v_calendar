@@ -368,10 +368,18 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           <ul className="space-y-1.5">
             {LEGEND.filter((l) => role === "STUDENT" || l.display !== "CLOSED").map((l) => (
               <li key={l.display} className="flex items-center gap-2 text-xs text-zinc-700">
-                <span className={cn("h-4 w-7 shrink-0 rounded", SLOT_STYLES[l.display])} />
+                {role === "INSTRUCTOR" && l.display === "CONFIRMED" ? (
+                  <span className="flex h-4 w-7 shrink-0 overflow-hidden rounded" aria-hidden>
+                    {STUDENTS.map((st) => (
+                      <span key={st.id} className={cn("flex-1", studentColor(st.id)?.dot)} />
+                    ))}
+                  </span>
+                ) : (
+                  <span className={cn("h-4 w-7 shrink-0 rounded", SLOT_STYLES[l.display])} />
+                )}
                 <span className="shrink-0 font-medium whitespace-nowrap text-zinc-900">{l.label}</span>
                 <span className="min-w-0 truncate text-zinc-500" title={l.hint}>
-                  {l.hint}
+                  {role === "INSTRUCTOR" && l.display === "CONFIRMED" ? "레슨생별 색" : l.hint}
                 </span>
               </li>
             ))}

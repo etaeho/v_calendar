@@ -54,6 +54,7 @@ import {
   SKIP_REASON_LABEL,
 } from "@/lib/lesson-machine";
 import { INSTRUCTOR, userName } from "@/lib/mock-data";
+import { studentColor } from "@/lib/student-colors";
 import { cn } from "@/lib/utils";
 import { useActor, useCalendarStore } from "@/store/calendar-store";
 import type {
@@ -1011,7 +1012,13 @@ function ReschedulePanel({
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
         <section>
           <h4 className="mb-1.5 text-xs font-semibold text-zinc-500">기존 레슨</h4>
-          <div className={cn("rounded-lg px-3 py-2 text-sm", SLOT_STYLES.CONFIRMED)}>
+          <div
+            className={cn(
+              "rounded-lg px-3 py-2 text-sm",
+              SLOT_STYLES.CONFIRMED,
+              role === "INSTRUCTOR" && studentColor(from.slot.studentId)?.fill,
+            )}
+          >
             <span className="font-semibold">{slotTitle(from, role)}</span>
             <span className="ml-2 tabular-nums opacity-90">{fmtRange(from.slot.start, from.slot.end)}</span>
           </div>

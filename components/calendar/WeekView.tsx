@@ -278,7 +278,7 @@ export function WeekView() {
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto">
       <div className="min-w-[720px]">
         <div className="sticky top-0 z-20 grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] border-b border-zinc-300 bg-white">
-          <div />
+          <div className="sticky left-0 z-10 bg-white" />
           {days.map((day, i) => {
             const isToday = isSameDay(day, today);
             const holiday = mainHoliday(day);
@@ -325,7 +325,7 @@ export function WeekView() {
         </div>
 
         <div className="grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))]">
-          <div className="relative" style={{ height: minToPx(TOTAL_MIN) }}>
+          <div className="sticky left-0 z-20 bg-white" style={{ height: minToPx(TOTAL_MIN) }}>
             {HOURS.map((h, i) => (
               <span
                 key={h}
@@ -403,7 +403,7 @@ export function WeekView() {
                       className={cn(
                         "absolute overflow-hidden rounded-md px-1.5 py-0.5 text-left text-xs leading-tight shadow-[0_1px_2px_rgba(0,0,0,0.08)] transition-shadow hover:z-10 hover:shadow-md focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-zinc-900",
                         itemClass(item, role),
-                        isDimmed(item, focus) && "opacity-30 saturate-50 hover:opacity-80",
+                        isDimmed(item, focus, picking) && "opacity-45 hover:opacity-90",
                         compact ? "flex items-center gap-1" : "flex flex-col justify-start",
                         draggable && "cursor-grab active:cursor-grabbing",
                         linked.has(item.id) && "z-10 ring-2 ring-zinc-900 ring-offset-1",
@@ -421,7 +421,7 @@ export function WeekView() {
                       }}
                     >
                       <span className="block truncate font-semibold">{itemTitle(item, role)}</span>
-                      <span className="block truncate tabular-nums opacity-85">
+                      <span className="block truncate tabular-nums opacity-90">
                         {fmtTime(item.start)}–{fmtTime(item.end)}
                       </span>
                     </button>

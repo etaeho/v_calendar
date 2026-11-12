@@ -14,29 +14,29 @@ export interface StudentColor {
 
 const PALETTE: StudentColor[] = [
   {
-    fill: "border-[#0b6b59] bg-[#129078] text-white",
-    stripe: "shadow-[inset_4px_0_0_#129078]",
-    dot: "bg-[#129078]",
+    fill: "border-[#0a5547] bg-[#0e7663] text-white",
+    stripe: "shadow-[inset_4px_0_0_#0e7663]",
+    dot: "bg-[#0e7663]",
   },
   {
-    fill: "border-[#15587a] bg-[#1f7aa6] text-white",
-    stripe: "shadow-[inset_4px_0_0_#1f7aa6]",
-    dot: "bg-[#1f7aa6]",
+    fill: "border-[#11506d] bg-[#1a6f96] text-white",
+    stripe: "shadow-[inset_4px_0_0_#1a6f96]",
+    dot: "bg-[#1a6f96]",
   },
   {
-    fill: "border-[#3e5f12] bg-[#5a8a1c] text-white",
-    stripe: "shadow-[inset_4px_0_0_#5a8a1c]",
-    dot: "bg-[#5a8a1c]",
+    fill: "border-[#334f11] bg-[#46731a] text-white",
+    stripe: "shadow-[inset_4px_0_0_#46731a]",
+    dot: "bg-[#46731a]",
   },
   {
-    fill: "border-[#3f4a8a] bg-[#5664b3] text-white",
-    stripe: "shadow-[inset_4px_0_0_#5664b3]",
-    dot: "bg-[#5664b3]",
+    fill: "border-[#3a4480] bg-[#4f5ca8] text-white",
+    stripe: "shadow-[inset_4px_0_0_#4f5ca8]",
+    dot: "bg-[#4f5ca8]",
   },
   {
-    fill: "border-[#7a3a5c] bg-[#a14f7c] text-white",
-    stripe: "shadow-[inset_4px_0_0_#a14f7c]",
-    dot: "bg-[#a14f7c]",
+    fill: "border-[#6e3252] bg-[#94466f] text-white",
+    stripe: "shadow-[inset_4px_0_0_#94466f]",
+    dot: "bg-[#94466f]",
   },
 ];
 

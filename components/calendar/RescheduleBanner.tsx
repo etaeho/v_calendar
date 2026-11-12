@@ -36,24 +36,21 @@ export function FocusBanner() {
   const focus = useFocusStudent();
   const pinned = useCalendarStore((s) => s.focusStudentId);
   const setFocusStudent = useCalendarStore((s) => s.setFocusStudent);
-  const closeDrawer = useCalendarStore((s) => s.closeDrawer);
   const drawerType = useCalendarStore((s) => s.drawer.type);
   if (!focus || drawerType === "reschedule") return null;
+  const fromDrawer = focus !== pinned;
   return (
     <div className="flex items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-4 py-1.5 text-sm text-zinc-800">
       <span className={cn("size-3 shrink-0 rounded-full", studentColor(focus)?.dot)} />
       <p className="min-w-0 flex-1">
         <strong>{userName(focus)}</strong> 일정만 강조해서 보는 중
+        {fromDrawer && <span className="text-zinc-500"> · 상세 창을 닫으면 {pinned ? `${userName(pinned)} 강조로` : "모두 보기로"} 돌아갑니다</span>}
       </p>
-      <Button
-        size="sm"
-        onClick={() => {
-          setFocusStudent(null);
-          if (!pinned) closeDrawer();
-        }}
-      >
-        모두 보기
-      </Button>
+      {pinned && (
+        <Button size="sm" onClick={() => setFocusStudent(null)}>
+          강조 해제
+        </Button>
+      )}
     </div>
   );
 }
