@@ -945,7 +945,8 @@ export function getSlotViews(state: LessonState, actor: Actor): SlotView[] {
     if (slot.status === "PENDING_CHANGE" && requests.get(slot.requestId ?? "")?.toSlotId === slot.id)
       continue;
     const d = new Date(slot.start);
-    const key = `${slot.studentId}:${d.getFullYear()}-${d.getMonth()}`;
+    // 회차는 수강 등록 단위로 센다 (재등록하면 새로 1부터)
+    const key = `${slot.enrollmentId ?? slot.studentId}:${d.getFullYear()}-${d.getMonth()}`;
     const list = groups.get(key);
     if (list) list.push(slot);
     else groups.set(key, [slot]);

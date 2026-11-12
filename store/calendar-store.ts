@@ -231,7 +231,7 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
         result.conflicts.length > 0 ? "info" : "success",
         success(result.created) +
           (result.conflicts.length > 0
-            ? ` 다른 일정과 겹친 ${result.conflicts.length}건은 만들지 못했습니다.`
+            ? ` 다른 레슨과 겹친 ${result.conflicts.length}건은 '미배정'으로 기록했습니다 (보강 필요).`
             : ""),
       );
     }

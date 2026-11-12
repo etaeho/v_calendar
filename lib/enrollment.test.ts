@@ -401,3 +401,31 @@ describe("QA 수정 사항", () => {
     assert.equal(r.created, 2);
   });
 });
+
+describe("검증 QA 수정 사항", () => {
+  it("고정 시간을 바꿔도 승인된 보강 레슨은 남고, 겹치는 정규 레슨은 미배정이 된다", () => {
+    const ctx = makeCtx();
+    let st = registerEnrollment(empty(), teacher, input({ endDate: "2026-11-30" }), regCtx(), noHoliday).state;
+    st = createOpenSlot(st, teacher, { start: local(2026, 11, 14, 14), end: local(2026, 11, 14, 15) }, ctx).state;
+    const mk = st.slots.find((s) => s.status === "OPEN")!.id;
+    st = requestBooking(st, s1, mk, ctx);
+    st = approveRequest(st, teacher, st.requests.at(-1)!.id, ctx);
+    assert.equal(makeupSummary(st, "s1", NOW).scheduled, 1);
+    const r = changeEnrollmentSchedule(st, teacher, st.enrollments[0].id, { times: [{ weekday: 6, time: "14:00", durationMin: 60 }], weeks: weekly }, "2026-11-13", ctx, noHoliday);
+    assert.equal(r.state.slots.find((s) => s.id === mk)!.status, "CONFIRMED");
+    assert.equal(r.conflicts.length, 1);
+    const sum = makeupSummary(r.state, "s1", NOW);
+    assert.deepEqual([sum.owed, sum.scheduled], [1, 1]);
+  });
+
+  it("재등록하면 그 달 회차를 등록별로 새로 센다", () => {
+    let st = registerEnrollment(empty(), teacher, input({ endDate: "2026-11-30" }), regCtx(), noHoliday).state;
+    st = endEnrollment(st, teacher, st.enrollments[0].id, "2026-11-12", makeCtx()).state;
+    const next: MachineContext = { now: () => NOW, id: (p) => `next-${p}` };
+    st = registerEnrollment(st, teacher, input({ startDate: "2026-11-13", endDate: "2026-12-31" }), next, noHoliday).state;
+    const nov = getSlotViews(st, s1)
+      .filter((v) => new Date(v.slot.start).getMonth() === 10 && v.seq)
+      .map((v) => `${v.seq!.n}/${v.seq!.total}`);
+    assert.deepEqual(nov, ["1/2", "2/2", "1/2", "2/2"]);
+  });
+});

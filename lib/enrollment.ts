@@ -247,6 +247,7 @@ function plan(
   ctx: MachineContext,
   keepSkipped: boolean,
 ) {
+  // keepSkipped = 고정 시간 변경(등록은 계속됨): 정규 레슨만 다시 만들고 보강 레슨·합의된 기록은 건드리지 않는다
   const boundary = Math.max(boundaryMs, Date.parse(ctx.now()));
   const others = state.enrollments.filter((e) => e.studentId === enrollment.studentId && e.id !== enrollment.id);
   const coveredByOther = (iso: string) => {
@@ -256,7 +257,8 @@ function plan(
   const affected = state.slots.filter((s) => {
     if (s.studentId !== enrollment.studentId || s.status === "OPEN" || Date.parse(s.start) <= boundary) return false;
     if (keepSkipped && s.status === "SKIPPED" && s.skipReason !== "CONFLICT") return false;
-    if (s.enrollmentId === enrollment.id) return true;
+    if (s.enrollmentId === enrollment.id) return !keepSkipped || s.lessonType === "REGULAR";
+    if (keepSkipped) return false;
     return !s.enrollmentId && s.lessonType === "MAKEUP" && !coveredByOther(s.start);
   });
   const affectedIds = new Set(affected.map((s) => s.id));
@@ -473,6 +475,7 @@ export function changeImpact(
   const count = (ref: Date) =>
     state.slots.filter((s) => {
       if (s.studentId !== fromSlot.studentId || s.id === fromSlot.id) return false;
+      if (s.enrollmentId !== fromSlot.enrollmentId) return false;
       // 달력의 n/total 과 같은 기준: 정규 레슨만
       if (s.lessonType !== "REGULAR" || s.status === "SKIPPED" || targets.has(s.id)) return false;
       const d = new Date(s.start);
