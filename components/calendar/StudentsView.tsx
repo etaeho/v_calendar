@@ -729,7 +729,12 @@ function EndForm({ enrollment, onDone }: { enrollment: Enrollment; onDone: () =>
           />
         </label>
       </div>
-      {endDate < minEnd ? (
+      {endDate > enrollment.endDate ? (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+          마지막 날은 현재 종료일({shortDate(enrollment.endDate)}) 이전이어야 합니다. 기간을
+          늘리려면 &lsquo;연장&rsquo;을 사용해 주세요.
+        </p>
+      ) : endDate < minEnd ? (
         <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
           마지막 날은 오늘({shortDate(minEnd)}) 이후로 정해 주세요. 지난 레슨 기록은 지우지
           않습니다.
@@ -741,7 +746,12 @@ function EndForm({ enrollment, onDone }: { enrollment: Enrollment; onDone: () =>
         </p>
       )}
       <FormActions onCancel={onDone}>
-        <Button type="submit" variant="danger" size="sm" disabled={!endDate || endDate < minEnd}>
+        <Button
+          type="submit"
+          variant="danger"
+          size="sm"
+          disabled={!endDate || endDate < minEnd || endDate > enrollment.endDate}
+        >
           종료 확정
         </Button>
       </FormActions>
