@@ -19,7 +19,7 @@ export function RescheduleBanner() {
       <ArrowRightLeft className="size-4 shrink-0" />
       <p className="min-w-0 flex-1">
         <strong className="font-semibold">{fmtDateTime(from.start)}</strong> 레슨을 옮길{" "}
-        <strong className="font-semibold">빈 슬롯(점선)</strong>을 달력에서 선택하세요.
+        <strong className="font-semibold">빈 슬롯(가능)</strong>을 달력에서 선택하세요.
       </p>
       <Button size="sm" onClick={() => openDrawer({ type: "slot", slotId: from.id })}>
         취소

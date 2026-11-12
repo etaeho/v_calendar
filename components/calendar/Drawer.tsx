@@ -40,6 +40,7 @@ import {
   useSlotViews,
 } from "@/lib/calendar-items";
 import { calendarLabel } from "@/lib/calendars";
+import { holidaysOn } from "@/lib/holidays";
 import { canCancel, canResolve } from "@/lib/lesson-machine";
 import { INSTRUCTOR, userName } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
@@ -118,8 +119,26 @@ function DayPanel({ date }: { date: string }) {
     if (id) openDrawer({ type: "slot", slotId: id });
   };
 
+  const holidays = holidaysOn(new Date(date));
+
   return (
     <div className="flex-1 space-y-4 overflow-y-auto p-4">
+      {holidays.length > 0 && (
+        <ul className="flex flex-wrap gap-1.5" aria-label="공휴일·기념일">
+          {holidays.map((h) => (
+            <li
+              key={h.name}
+              className={cn(
+                "rounded-full px-2.5 py-0.5 text-xs font-medium",
+                h.dayOff ? "bg-red-50 text-red-700" : "bg-zinc-100 text-zinc-600",
+              )}
+            >
+              {h.name}
+              {h.dayOff ? " · 공휴일" : " · 기념일"}
+            </li>
+          ))}
+        </ul>
+      )}
       {items.length === 0 ? (
         <p className="rounded-lg bg-zinc-50 px-3 py-6 text-center text-sm text-zinc-500">
           이 날은 표시할 일정이 없습니다.
@@ -691,7 +710,7 @@ function ReschedulePanel({
 
         <fieldset>
           <legend className="mb-1.5 text-xs font-semibold text-zinc-500">
-            변경할 빈 슬롯 선택 (달력에서 점선 슬롯을 눌러도 됩니다)
+            변경할 빈 슬롯 선택 (달력에서 '가능' 슬롯을 눌러도 됩니다)
           </legend>
           {toRange && (
             <div className="mb-1.5 rounded-lg border-2 border-violet-500 bg-violet-50 px-3 py-2 text-sm">

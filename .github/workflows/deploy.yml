@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # 매월 1일 공휴일 데이터를 다시 받아 재배포 (임시공휴일 반영)
+  schedule:
+    - cron: "17 3 1 * *"
 
 permissions:
   contents: read
@@ -25,6 +28,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      # 구글 캘린더 공개 '대한민국의 휴일' 캘린더에서 최신 공휴일을 받는다 (API 키 불필요, 실패 시 저장된 파일 사용)
+      - run: npm run holidays
       - run: npm run build
         env:
           # 프로젝트 페이지는 https://<user>.github.io/<repo>/ 로 서빙된다

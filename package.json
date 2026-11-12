@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test": "node --test \"lib/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "build:preview": "node scripts/build-preview.mjs"
+    "build:preview": "node scripts/build-preview.mjs",
+    "holidays": "node scripts/fetch-holidays.mjs"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",

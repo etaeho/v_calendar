@@ -14,6 +14,7 @@ import {
   useLinkedSlotIds,
   type CalendarItem,
 } from "@/lib/calendar-items";
+import { mainHoliday } from "@/lib/holidays";
 import { planDrop, type DropPlan } from "@/lib/lesson-machine";
 import { cn } from "@/lib/utils";
 import { actorForRole, useCalendarStore } from "@/store/calendar-store";
@@ -252,17 +253,19 @@ export function WeekView() {
           <div />
           {days.map((day, i) => {
             const isToday = isSameDay(day, today);
+            const holiday = mainHoliday(day);
+            const red = i === 0 || holiday?.dayOff;
             return (
               <button
                 key={day.toISOString()}
                 type="button"
                 onClick={() => openDrawer({ type: "day", date: day.toISOString() })}
-                className="flex flex-col items-center gap-0.5 border-l border-zinc-200 py-1.5 hover:bg-zinc-50"
+                className="flex min-w-0 flex-col items-center gap-0.5 border-l border-zinc-200 px-1 pt-1.5 pb-1 hover:bg-zinc-50"
               >
                 <span
                   className={cn(
                     "text-xs font-medium",
-                    i === 0 ? "text-red-600" : i === 6 ? "text-blue-600" : "text-zinc-600",
+                    red ? "text-red-600" : i === 6 ? "text-blue-600" : "text-zinc-600",
                   )}
                 >
                   {WEEKDAYS[i]}
@@ -270,10 +273,23 @@ export function WeekView() {
                 <span
                   className={cn(
                     "flex size-7 items-center justify-center rounded-full text-sm tabular-nums",
-                    isToday ? "bg-mint-600 font-bold text-white" : "text-zinc-900",
+                    isToday
+                      ? "bg-mint-600 font-bold text-white"
+                      : red
+                        ? "font-semibold text-red-600"
+                        : "text-zinc-900",
                   )}
                 >
                   {day.getDate()}
+                </span>
+                <span
+                  title={holiday?.name}
+                  className={cn(
+                    "h-4 max-w-full truncate text-[11px] leading-4",
+                    holiday?.dayOff ? "font-medium text-red-600" : "text-zinc-500",
+                  )}
+                >
+                  {holiday?.name}
                 </span>
               </button>
             );
@@ -448,7 +464,7 @@ export function WeekView() {
             </>
           ) : (
             <>
-              내 레슨을 <strong>빈 슬롯(점선) 위로 끌어 놓으면</strong> 일정 변경을 요청할 수 있습니다.
+              내 레슨을 <strong>빈 슬롯(가능) 위로 끌어 놓으면</strong> 일정 변경을 요청할 수 있습니다.
             </>
           )}
         </p>

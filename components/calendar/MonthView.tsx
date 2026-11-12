@@ -23,6 +23,7 @@ import {
   useItemClick,
   useLinkedSlotIds,
 } from "@/lib/calendar-items";
+import { mainHoliday } from "@/lib/holidays";
 import { cn } from "@/lib/utils";
 import { useCalendarStore } from "@/store/calendar-store";
 
@@ -76,6 +77,8 @@ export function MonthView() {
           const selected = drawer.type === "day" && isSameDay(new Date(drawer.date), day);
           const dow = day.getDay();
           const key = day.toISOString();
+          const holiday = mainHoliday(day);
+          const red = dow === 0 || holiday?.dayOff;
           return (
             <div
               key={key}
@@ -111,16 +114,18 @@ export function MonthView() {
                 onClick={() => openDrawer({ type: "day", date: day.toISOString() })}
                 className="absolute inset-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-mint-600"
               />
-              <div className="pointer-events-none relative mb-0.5 flex justify-center sm:justify-start">
+              <div className="pointer-events-none relative mb-0.5 flex min-w-0 items-center justify-center gap-1 sm:justify-start">
                 <span
                   className={cn(
-                    "flex size-6 items-center justify-center rounded-full text-xs tabular-nums",
+                    "flex size-6 shrink-0 items-center justify-center rounded-full text-xs tabular-nums",
                     isToday
                       ? "bg-mint-600 font-bold text-white"
                       : !inMonth
-                        ? "text-zinc-400"
-                        : dow === 0
-                          ? "text-red-600"
+                        ? red
+                          ? "text-red-300"
+                          : "text-zinc-400"
+                        : red
+                          ? "font-semibold text-red-600"
                           : dow === 6
                             ? "text-blue-600"
                             : "text-zinc-800",
@@ -128,6 +133,18 @@ export function MonthView() {
                 >
                   {day.getDate()}
                 </span>
+                {holiday && (
+                  <span
+                    title={holiday.name}
+                    className={cn(
+                      "hidden min-w-0 truncate text-[11px] sm:inline",
+                      holiday.dayOff ? "font-medium text-red-600" : "text-zinc-500",
+                      !inMonth && "opacity-60",
+                    )}
+                  >
+                    {holiday.name}
+                  </span>
+                )}
               </div>
               <ul className="relative space-y-0.5">
                 {dayItems.slice(0, MAX_CHIPS).map((item) => (
