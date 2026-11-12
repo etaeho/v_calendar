@@ -5,8 +5,8 @@ import { ChevronLeft, ChevronRight, GraduationCap, Menu, Music } from "lucide-re
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/lib/use-mobile";
 import { cn } from "@/lib/utils";
-import { INSTRUCTOR, STUDENTS } from "@/lib/mock-data";
-import { useCalendarStore } from "@/store/calendar-store";
+
+import { useCalendarStore, useInstructor, useStudents } from "@/store/calendar-store";
 import type { CalendarViewMode } from "@/types/calendar";
 
 const VIEWS: { id: CalendarViewMode; label: string }[] = [
@@ -15,6 +15,7 @@ const VIEWS: { id: CalendarViewMode; label: string }[] = [
 ];
 
 export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+  const STUDENTS = useStudents();
   const cursor = useCalendarStore((s) => s.cursor);
   const view = useCalendarStore((s) => s.view);
   const role = useCalendarStore((s) => s.role);
@@ -223,6 +224,8 @@ export function Header({ onToggleSidebar }: { onToggleSidebar: () => void }) {
  * (PC 에서는 역할 스위치 + 레슨생 선택을 쓴다)
  */
 function ActingUserSelect({ className }: { className?: string }) {
+  const STUDENTS = useStudents();
+  const INSTRUCTOR = useInstructor();
   const role = useCalendarStore((s) => s.role);
   const studentId = useCalendarStore((s) => s.studentId);
   const setRole = useCalendarStore((s) => s.setRole);

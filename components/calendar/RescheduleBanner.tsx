@@ -3,7 +3,7 @@
 import { ArrowRightLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fmtDateTime, useFocusStudent } from "@/lib/calendar-items";
-import { userName } from "@/lib/mock-data";
+import { userName } from "@/lib/directory";
 import { studentColor } from "@/lib/student-colors";
 import { cn } from "@/lib/utils";
 import { useCalendarStore } from "@/store/calendar-store";

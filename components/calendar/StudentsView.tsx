@@ -19,10 +19,10 @@ import {
   toDateKey,
 } from "@/lib/enrollment";
 import { LessonError, makeupSummary, type MachineContext } from "@/lib/lesson-machine";
-import { INSTRUCTOR, STUDENTS } from "@/lib/mock-data";
+
 import { studentColor } from "@/lib/student-colors";
 import { cn } from "@/lib/utils";
-import { useCalendarStore } from "@/store/calendar-store";
+import { useCalendarStore, useInstructor, useStudents } from "@/store/calendar-store";
 import type { Enrollment, LessonState, User, WeeklyTime } from "@/types/calendar";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -83,6 +83,7 @@ const labelCls = "block text-xs font-medium text-zinc-600";
 
 /** 강사용: 레슨생별 수강 등록(기간·고정 시간·횟수·변경 마감·수강료) 관리 */
 export function StudentsView() {
+  const STUDENTS = useStudents();
   const lesson = useCalendarStore((s) => s.lesson);
   const now = useCalendarStore((s) => s.now);
   const conflicts = useCalendarStore((s) => s.conflicts);
@@ -358,6 +359,8 @@ function PlanForm({
   defaultStart?: string;
   onDone: () => void;
 }) {
+  const instructorId = useInstructor().id;
+  const STUDENTS = useStudents();
   const base = enrollment ?? template;
   const lesson = useCalendarStore((s) => s.lesson);
   const now = useCalendarStore((s) => s.now);
@@ -396,7 +399,7 @@ function PlanForm({
   let previewError: string | null = null;
   if (valid && (!editing || scheduleChanged)) {
     const dry: MachineContext = { now: () => now, id: (p) => `preview-${p}` };
-    const instructor = { userId: INSTRUCTOR.id, role: "INSTRUCTOR" as const };
+    const instructor = { userId: instructorId, role: "INSTRUCTOR" as const };
     const noHoliday = () => undefined;
     try {
       const r = editing
@@ -714,6 +717,7 @@ function PlanForm({
 }
 
 function ExtendForm({ enrollment, onDone }: { enrollment: Enrollment; onDone: () => void }) {
+  const instructorId = useInstructor().id;
   const store = useCalendarStore.getState;
   const plus = (months: number) =>
     toDateKey(endOfMonth(addMonths(new Date(`${enrollment.endDate}T00:00`), months)));
@@ -728,7 +732,7 @@ function ExtendForm({ enrollment, onDone }: { enrollment: Enrollment; onDone: ()
     try {
       const r = extendEnrollment(
         lesson,
-        { userId: INSTRUCTOR.id, role: "INSTRUCTOR" },
+        { userId: instructorId, role: "INSTRUCTOR" },
         enrollment.id,
         endDate,
         { now: () => now, id: (p) => `preview-${p}` },

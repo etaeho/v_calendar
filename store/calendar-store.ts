@@ -2,42 +2,19 @@
 
 import { useMemo } from "react";
 import { create } from "zustand";
+import { runCommand, type Command, type CommandResult } from "@/lib/commands";
+import { getDirectory, instructorOf, setDirectory, userName } from "@/lib/directory";
+import { LessonError, planDrop, settle, type MachineContext } from "@/lib/lesson-machine";
 import {
-  addComment,
-  approveRequest,
-  cancelRequest,
-  createOpenSlot,
-  deleteOpenSlot,
-  LessonError,
-  moveOpenSlot,
-  planDrop,
-  adjustMakeup,
-  proposeDefer,
-  proposeMakeup,
-  proposeHoliday,
-  rejectRequest,
-  requestBooking,
-  restoreMissed,
-  requestChange,
-  requestChangeToNewTime,
-  settle,
-  type MachineContext,
-} from "@/lib/lesson-machine";
-import {
-  approveScheduleRequest,
-  requestScheduleChange,
-  changeEnrollmentSchedule,
-  endEnrollment,
-  extendEnrollment,
   markHolidays,
-  registerEnrollment,
-  updateEnrollmentTerms,
   type EnrollmentInput,
   type GenerationConflict,
   type HolidayLookup,
 } from "@/lib/enrollment";
 import { holidaysOn } from "@/lib/holidays";
-import { createInitialLessonState, INSTRUCTOR, STUDENTS, USERS } from "@/lib/mock-data";
+import { createInitialLessonState, STUDENTS, USERS } from "@/lib/mock-data";
+import { deriveNotifications, type AppNotification } from "@/lib/notifications";
+import { RemoteApi, toUsers, type Me } from "@/lib/remote";
 import { calendarSyncServices } from "@/lib/services/calendar-sync";
 import type {
   Actor,
@@ -158,17 +135,31 @@ interface CalendarStore {
     id: string,
     terms: Pick<Enrollment, "changeDeadlineHours" | "fee" | "paymentDay">,
   ) => boolean;
-  changeEnrollmentSchedule: (
-    id: string,
-    schedule: Pick<Enrollment, "times" | "weeks">,
-    fromDate: string,
-  ) => boolean;
   extendEnrollment: (id: string, newEndDate: string) => boolean;
   endEnrollment: (id: string, endDate: string) => boolean;
   /** 마지막 등록/연장에서 다른 일정과 겹쳐 만들지 못한 레슨 */
   conflicts: GenerationConflict[];
   clearConflicts: () => void;
+
+  /** 사용자 목록 (데모: 테스트베드 / 서버: 회원) */
+  members: User[];
+  /** 알림 (데모: 브라우저에서 계산 / 서버: 서버에서 받아 옴) */
+  notifications: AppNotification[];
+  markNotificationsRead: () => void;
+
+  /** 서버 모드 세션. null 이면 데모 모드 */
+  session: Me | null;
+  remoteVersion: number;
+  /** 서버 모드 시작: 로그인한 사용자와 서버 상태를 불러와 화면을 바꾼다 */
+  startRemote: (api: RemoteApi, me: Me) => Promise<void>;
+  /** 실시간 알림을 받으면 서버 상태를 다시 불러온다 */
+  refreshFromServer: () => Promise<void>;
+  /** 강사: 레슨생 초대 (서버 모드) */
+  inviteStudent: (name: string, email: string, phone?: string) => Promise<boolean>;
 }
+
+/** 서버 모드 API (startRemote 에서 설정) */
+let remote: RemoteApi | null = null;
 
 /** 쉬는 공휴일이면 그 이름 */
 const holidayLookup: HolidayLookup = (day) => holidaysOn(day).find((h) => h.dayOff)?.name;
@@ -181,7 +172,9 @@ const ctx: MachineContext = {
 
 /** 지금 화면을 보고 있는 사용자 */
 export const currentUser = (role: UserRole, studentId: string): User =>
-  role === "INSTRUCTOR" ? INSTRUCTOR : (USERS.find((u) => u.id === studentId) ?? STUDENTS[0]);
+  role === "INSTRUCTOR"
+    ? (instructorOf() ?? { id: "t1", name: "강사", role: "INSTRUCTOR" })
+    : (getDirectory().find((u) => u.id === studentId) ?? { id: studentId, name: "", role: "STUDENT" });
 
 export const actorOf = (role: UserRole, studentId: string): Actor => ({
   userId: currentUser(role, studentId).id,
@@ -194,7 +187,19 @@ const actorFromState = (s: { role: UserRole; studentId: string }) => actorOf(s.r
 export function useActor(): Actor {
   const role = useCalendarStore((s) => s.role);
   const studentId = useCalendarStore((s) => s.studentId);
-  return useMemo(() => actorOf(role, studentId), [role, studentId]);
+  const members = useCalendarStore((s) => s.members);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- members 가 바뀌면 강사 id 가 바뀔 수 있다
+  return useMemo(() => actorOf(role, studentId), [role, studentId, members]);
+}
+
+/** 레슨생 목록 / 강사 */
+export function useStudents(): User[] {
+  const members = useCalendarStore((s) => s.members);
+  return useMemo(() => members.filter((m) => m.role === "STUDENT"), [members]);
+}
+export function useInstructor(): User {
+  const members = useCalendarStore((s) => s.members);
+  return instructorOf(members) ?? { id: "t1", name: "강사", role: "INSTRUCTOR" };
 }
 
 export const syncKey = (userId: string, provider: ExternalProvider) => `${userId}:${provider}`;
@@ -211,61 +216,92 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
   const toast = (kind: Toast["kind"], message: string) =>
     set({ toast: { id: ++seq, kind, message } });
 
-  /** 상태 머신 전이를 실행하고, 도메인 오류는 토스트로 보여준다 */
-  const transition = (
-    fn: (state: LessonState, actor: Actor) => LessonState,
-    success?: string,
-  ): boolean => {
+  /**
+   * 명령 실행: 같은 상태 머신으로 화면에 바로 반영하고(데모·서버 공통),
+   * 서버 모드면 같은 명령을 서버에 보내 서버 결과로 맞춘다. 규칙 위반은 토스트로 알린다.
+   */
+  const exec = (
+    cmd: Command,
+    success?: string | ((r: CommandResult) => string),
+  ): CommandResult | null => {
+    const before = get().lesson;
+    const actor = actorFromState(get());
+    let r: CommandResult;
     try {
-      const lesson = fn(get().lesson, actorFromState(get()));
-      set({ lesson });
-      if (success) toast("success", success);
-      return true;
+      r = runCommand(before, actor, cmd, ctx, holidayLookup);
     } catch (e) {
       if (e instanceof LessonError) {
         toast("error", e.message);
-        return false;
+        return null;
       }
       throw e;
     }
+    const patch: Partial<CalendarStore> = { lesson: r.state };
+    if (!remote) {
+      // 데모 모드: 알림을 브라우저에서 계산 (서버 모드는 서버가 계산)
+      const instructorId = instructorOf(get().members)?.id ?? "";
+      patch.notifications = [
+        ...get().notifications,
+        ...deriveNotifications(before, r.state, actor, instructorId, userName, ctx.now(), ctx.id),
+      ];
+    }
+    if (r.conflicts) patch.conflicts = r.conflicts;
+    set(patch);
+    const msg = typeof success === "function" ? success(r) : success;
+    const missed = r.conflicts?.length ?? 0;
+    if (msg)
+      toast(
+        missed > 0 ? "info" : "success",
+        msg + (missed > 0 ? ` 다른 레슨과 겹친 ${missed}건은 '미배정'으로 기록했습니다 (보강 필요).` : ""),
+      );
+    if (remote) void sendRemote(cmd, r);
+    return r;
   };
 
-  /** 레슨이 생성되는 등록 작업: 겹쳐서 못 만든 날이 있으면 따로 보여 준다 */
-  const generateWith = (
-    fn: (
-      state: LessonState,
-      actor: Actor,
-    ) => {
-      state: LessonState;
-      created: number;
-      conflicts: GenerationConflict[];
-    },
-    success: (created: number) => string,
-  ): boolean => {
-    let result: { created: number; conflicts: GenerationConflict[] } | undefined;
-    const ok = transition((state, actor) => {
-      const r = fn(state, actor);
-      result = r;
-      return r.state;
-    });
-    if (ok && result) {
-      set({ conflicts: result.conflicts });
-      toast(
-        result.conflicts.length > 0 ? "info" : "success",
-        success(result.created) +
-          (result.conflicts.length > 0
-            ? ` 다른 레슨과 겹친 ${result.conflicts.length}건은 '미배정'으로 기록했습니다 (보강 필요).`
-            : ""),
-      );
+  /** 서버 모드: 명령을 서버에 보내고, 서버 상태로 맞춘다 (실패하면 서버 상태로 되돌리고 알림) */
+  const sendRemote = async (cmd: Command, local: CommandResult) => {
+    if (!remote) return;
+    const res = await remote.command(cmd);
+    if (!res.ok) {
+      toast("error", res.error.message);
+      await refreshRemote();
+      return;
     }
-    return ok;
+    set({ lesson: res.state, remoteVersion: res.version });
+    // 화면에서 연 새 슬롯은 서버가 만든 id 로 바꿔 준다
+    const { drawer } = get();
+    if (local.slotId && res.result.slotId && drawer.type === "slot" && drawer.slotId === local.slotId)
+      set({ drawer: { type: "slot", slotId: res.result.slotId } });
+    void loadRemoteNotifications();
   };
+
+  const refreshRemote = async () => {
+    if (!remote) return;
+    const res = await remote.view();
+    if (!res.ok) {
+      toast("error", res.error.message);
+      return;
+    }
+    const members = toUsers(res.members);
+    setDirectory(members);
+    set({ lesson: res.state, remoteVersion: res.version, members });
+  };
+
+  const loadRemoteNotifications = async () => {
+    if (!remote) return;
+    const res = await remote.notifications();
+    if (res.ok) set({ notifications: res.notifications });
+  };
+
+  /** 레슨이 생성되는 등록 작업 */
+  const generate = (cmd: Command, success: (created: number) => string): boolean =>
+    !!exec(cmd, (r) => success(r.created ?? 0));
 
   /** 확정된 레슨을 연결된 외부 캘린더에 Push (Phase 3 에서 실제 API 호출로 대체) */
   const pushConfirmed = (slotId: string) => {
     const slot = get().lesson.slots.find((s) => s.id === slotId);
     if (!slot || slot.status !== "CONFIRMED" || !slot.studentId) return;
-    for (const userId of [INSTRUCTOR.id, slot.studentId]) {
+    for (const userId of [instructorOf(get().members)?.id ?? "", slot.studentId]) {
       for (const service of Object.values(calendarSyncServices)) {
         void service.isConnected(userId).then((ok) => {
           if (ok) void service.pushLesson(userId, slot);
@@ -395,31 +431,21 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     },
 
     createSlot: (start, end) => {
-      let createdId: string | null = null;
-      transition((state, actor) => {
-        const result = createOpenSlot(
-          state,
-          actor,
-          { start: start.toISOString(), end: end.toISOString() },
-          ctx,
-        );
-        createdId = result.slot.id;
-        return result.state;
-      }, "레슨 가능 슬롯을 열었습니다.");
-      return createdId;
+      const r = exec(
+        { type: "createOpenSlot", start: start.toISOString(), end: end.toISOString() },
+        "레슨 가능 슬롯을 열었습니다.",
+      );
+      return r?.slotId ?? null;
     },
 
     deleteSlot: (slotId) => {
-      if (transition((s, a) => deleteOpenSlot(s, a, slotId), "슬롯을 삭제했습니다.")) {
+      if (exec({ type: "deleteOpenSlot", slotId }, "슬롯을 삭제했습니다.")) {
         set({ drawer: { type: "closed" } });
       }
     },
 
     bookSlot: (slotId, message) => {
-      transition(
-        (s, a) => requestBooking(s, a, slotId, ctx, message),
-        "보강을 신청했습니다. 강사 승인을 기다려 주세요.",
-      );
+      exec({ type: "requestBooking", slotId, message }, "보강을 신청했습니다. 강사 승인을 기다려 주세요.");
     },
 
     startReschedule: (fromSlotId) => set({ drawer: { type: "reschedule", fromSlotId } }),
@@ -443,11 +469,10 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       if (drawer.type !== "reschedule") return;
       const { fromSlotId, toSlotId, toRange } = drawer;
       if (!toSlotId && !toRange) return;
-      const ok = transition(
-        (s, a) =>
-          toRange
-            ? requestChangeToNewTime(s, a, fromSlotId, toRange, ctx, message)
-            : requestChange(s, a, fromSlotId, toSlotId!, ctx, message),
+      const ok = exec(
+        toRange
+          ? { type: "requestChangeToNewTime", fromSlotId, ...toRange, message }
+          : { type: "requestChange", fromSlotId, toSlotId: toSlotId!, message },
         "일정 변경을 요청했습니다. 상대방의 동의를 기다려 주세요.",
       );
       if (ok) set({ drawer: { type: "slot", slotId: fromSlotId } });
@@ -463,7 +488,9 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
           toast("error", plan.reason);
           return;
         case "move":
-          if (transition((s, a) => moveOpenSlot(s, a, slotId, plan), "빈 슬롯을 옮겼습니다.")) {
+          if (
+            exec({ type: "moveOpenSlot", slotId, start: plan.start, end: plan.end }, "빈 슬롯을 옮겼습니다.")
+          ) {
             set({ drawer: { type: "slot", slotId } });
           }
           return;
@@ -493,8 +520,8 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
       const request = get().lesson.requests.find((r) => r.id === requestId);
       if (request?.kind === "SCHEDULE") {
         const verb = get().role === "STUDENT" ? "동의했습니다" : "승인했습니다";
-        const ok = generateWith(
-          (s, a) => approveScheduleRequest(s, a, requestId, ctx, holidayLookup),
+        const ok = generate(
+          { type: "approve", requestId },
           (n) => `${verb}. 고정 시간이 바뀌어 정규 레슨 ${n}건을 새 시간으로 다시 만들었습니다.`,
         );
         if (ok) {
@@ -507,8 +534,8 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
         }
         return;
       }
-      const ok = transition(
-        (s, a) => approveRequest(s, a, requestId, ctx),
+      const ok = exec(
+        { type: "approve", requestId },
         request?.kind === "DEFER"
           ? "동의했습니다. 이 레슨은 보강으로 미뤘습니다 (보강 필요 1회)."
           : request?.kind === "HOLIDAY"
@@ -533,26 +560,23 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
 
     reject: (requestId, reason) => {
       const request = get().lesson.requests.find((r) => r.id === requestId);
-      const ok = transition(
-        (s, a) => rejectRequest(s, a, requestId, ctx, reason),
-        "요청을 거절했습니다.",
-      );
+      const ok = exec({ type: "reject", requestId, reason }, "요청을 거절했습니다.");
       if (ok && request) afterRevert(request.kind, request.fromSlotId, request.toSlotId);
     },
 
     cancel: (requestId) => {
       const request = get().lesson.requests.find((r) => r.id === requestId);
-      const ok = transition((s, a) => cancelRequest(s, a, requestId, ctx), "요청을 취소했습니다.");
+      const ok = exec({ type: "cancel", requestId }, "요청을 취소했습니다.");
       if (ok && request) afterRevert(request.kind, request.fromSlotId, request.toSlotId);
     },
 
     comment: (slotId, body) => {
-      transition((s, a) => addComment(s, a, slotId, body, ctx));
+      exec({ type: "addComment", slotId, body });
     },
 
     proposeHoliday: (slotId, proposal, message) => {
-      transition(
-        (s, a) => proposeHoliday(s, a, slotId, proposal, ctx, message),
+      exec(
+        { type: "proposeHoliday", slotId, proposal, message },
         proposal === "SKIP"
           ? "휴강을 제안했습니다. 상대방의 동의를 기다려 주세요."
           : "그대로 진행을 제안했습니다. 상대방의 동의를 기다려 주세요.",
@@ -562,12 +586,62 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     conflicts: [],
     clearConflicts: () => set({ conflicts: [] }),
 
+    members: USERS,
+    notifications: [],
+    markNotificationsRead: () => {
+      const me = actorFromState(get()).userId;
+      const now = new Date().toISOString();
+      const unread = get().notifications.filter((n) => n.recipient === me && !n.readAt);
+      if (unread.length === 0) return;
+      set({
+        notifications: get().notifications.map((n) =>
+          n.recipient === me && !n.readAt ? { ...n, readAt: now } : n,
+        ),
+      });
+      if (remote) void remote.markRead(unread.map((n) => n.id));
+    },
+
+    session: null,
+    remoteVersion: 0,
+    startRemote: async (api, me) => {
+      remote = api;
+      set({
+        session: me,
+        role: me.role,
+        studentId: me.role === "STUDENT" ? me.appKey : get().studentId,
+        lesson: emptyLesson,
+        notifications: [],
+        externalEvents: [],
+        drawer: { type: "closed" },
+        view: me.role === "STUDENT" && get().view === "students" ? "month" : get().view,
+      });
+      await refreshRemote();
+      await loadRemoteNotifications();
+    },
+    refreshFromServer: async () => {
+      await refreshRemote();
+      await loadRemoteNotifications();
+    },
+    inviteStudent: async (name, email, phone) => {
+      if (!remote) return false;
+      const res = await remote.addMember(name, email, phone);
+      if (!res.ok) {
+        toast("error", res.error.message);
+        return false;
+      }
+      const members = toUsers(res.members);
+      setDirectory(members);
+      set({ members });
+      toast("success", `${name} 님을 초대했습니다. ${email} 로 로그인하면 바로 연결됩니다.`);
+      return true;
+    },
+
     focusStudentId: null,
     setFocusStudent: (studentId) => set({ focusStudentId: studentId }),
 
     proposeDefer: (slotId, message) => {
-      transition(
-        (s, a) => proposeDefer(s, a, slotId, ctx, message),
+      exec(
+        { type: "proposeDefer", slotId, message },
         "보강으로 미루기를 요청했습니다. 상대방의 동의를 기다려 주세요.",
       );
     },
@@ -575,7 +649,7 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     notify: (kind, message) => toast(kind, message),
 
     restoreMissed: (slotId) => {
-      transition((s, a) => restoreMissed(s, a, slotId, ctx), "원래 시간으로 레슨을 다시 잡았습니다.");
+      exec({ type: "restoreMissed", slotId }, "원래 시간으로 레슨을 다시 잡았습니다.");
     },
 
     setRescheduleRange: (range) => {
@@ -600,53 +674,44 @@ export const useCalendarStore = create<CalendarStore>((set, get) => {
     },
 
     proposeMakeup: (slotId, studentId, message) =>
-      transition(
-        (s, a) => proposeMakeup(s, a, slotId, studentId, ctx, message),
+      !!exec(
+        { type: "proposeMakeup", slotId, studentId, message },
         "보강 시간을 제안했습니다. 레슨생의 동의를 기다려 주세요.",
       ),
 
     adjustMakeup: (studentId, delta, reason) =>
-      transition(
-        (s, a) => adjustMakeup(s, a, studentId, delta, reason, ctx),
+      !!exec(
+        { type: "adjustMakeup", studentId, delta, reason },
         `보강 필요 횟수를 ${delta > 0 ? `${delta}회 늘렸습니다` : `${-delta}회 줄였습니다`}.`,
       ),
 
     requestScheduleChange: (enrollmentId, schedule, fromDate, message) =>
-      transition(
-        (s, a) => requestScheduleChange(s, a, enrollmentId, schedule, fromDate, ctx, message),
+      !!exec(
+        { type: "requestScheduleChange", enrollmentId, schedule, fromDate, message },
         get().role === "STUDENT"
           ? "고정 시간 변경을 요청했습니다. 강사가 승인하면 적용됩니다."
           : "고정 시간 변경을 요청했습니다. 레슨생이 동의하면 적용됩니다.",
       ),
 
     registerEnrollment: (input) =>
-      generateWith(
-        (s, a) => registerEnrollment(s, a, input, ctx, holidayLookup),
+      generate(
+        { type: "registerEnrollment", input },
         (n) => `수강 등록을 저장하고 정규 레슨 ${n}건을 만들었습니다.`,
       ),
 
     updateEnrollmentTerms: (id, terms) =>
-      transition((s, a) => updateEnrollmentTerms(s, a, id, terms), "등록 조건을 수정했습니다."),
-
-    changeEnrollmentSchedule: (id, schedule, fromDate) =>
-      generateWith(
-        (s, a) => changeEnrollmentSchedule(s, a, id, schedule, fromDate, ctx, holidayLookup),
-        (n) => `고정 시간을 바꾸고 정규 레슨 ${n}건을 다시 만들었습니다.`,
-      ),
+      !!exec({ type: "updateEnrollmentTerms", id, terms }, "등록 조건을 수정했습니다."),
 
     extendEnrollment: (id, newEndDate) =>
-      generateWith(
-        (s, a) => extendEnrollment(s, a, id, newEndDate, ctx, holidayLookup),
+      generate(
+        { type: "extendEnrollment", id, newEndDate },
         (n) => `등록을 연장하고 정규 레슨 ${n}건을 추가했습니다.`,
       ),
 
     endEnrollment: (id, endDate) => {
-      let removed = 0;
-      const ok = transition((s, a) => {
-        const r = endEnrollment(s, a, id, endDate, ctx);
-        removed = r.removed;
-        return r.state;
-      });
+      const r = exec({ type: "endEnrollment", id, endDate });
+      const removed = r?.removed ?? 0;
+      const ok = !!r;
       if (ok) {
         const { drawer, lesson } = get();
         // 보고 있던 레슨이 삭제됐으면 상세 창을 닫는다

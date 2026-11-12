@@ -4,7 +4,7 @@ import { format, formatDistanceStrict, isSameDay } from "date-fns";
 import { ko } from "date-fns/locale";
 import { useMemo } from "react";
 import { getSlotViews, overlaps } from "@/lib/lesson-machine";
-import { userName } from "@/lib/mock-data";
+import { userName } from "@/lib/directory";
 import { studentColor } from "@/lib/student-colors";
 import { useActor, useCalendarStore } from "@/store/calendar-store";
 import type { ExternalEvent, SlotDisplay, SlotView, UserRole } from "@/types/calendar";

@@ -9,6 +9,7 @@ import {
   type EnrollmentInput,
   type HolidayLookup,
 } from "@/lib/enrollment";
+import { setDirectory, userName } from "@/lib/directory";
 import { overlaps, type MachineContext } from "@/lib/lesson-machine";
 import type {
   Actor,
@@ -44,8 +45,9 @@ export const STUDENTS: User[] = [
 
 export const USERS: User[] = [INSTRUCTOR, ...STUDENTS];
 
-export const userName = (id: string | undefined) =>
-  USERS.find((u) => u.id === id)?.name ?? "알 수 없음";
+// 데모 모드 기본 사용자 목록 (서버 모드에서는 스토어가 회원 목록으로 바꾼다)
+setDirectory(USERS);
+export { userName };
 
 /** 이번 주 일요일 기준 day 일 뒤의 HH:MM */
 const makeAt = (now: Date) => {

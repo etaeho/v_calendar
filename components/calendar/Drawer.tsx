@@ -64,7 +64,7 @@ import {
   makeupSummary,
   SKIP_REASON_LABEL,
 } from "@/lib/lesson-machine";
-import { INSTRUCTOR, userName } from "@/lib/mock-data";
+import { instructorOf, userName } from "@/lib/directory";
 import { studentColor } from "@/lib/student-colors";
 import { useIsMobile } from "@/lib/use-mobile";
 import { cn } from "@/lib/utils";
@@ -789,9 +789,9 @@ function RequestCard({
   const cancellable = canCancel(request, actor);
 
   const requester =
-    request.requestedBy === "INSTRUCTOR" ? INSTRUCTOR.name : userName(request.studentId);
+    request.requestedBy === "INSTRUCTOR" ? (instructorOf()?.name ?? "강사") : userName(request.studentId);
   const responder =
-    request.requestedBy === "INSTRUCTOR" ? userName(request.studentId) : INSTRUCTOR.name;
+    request.requestedBy === "INSTRUCTOR" ? userName(request.studentId) : (instructorOf()?.name ?? "강사");
 
   const linkedId =
     request.kind === "CHANGE"
@@ -1113,7 +1113,7 @@ function PastRequests({ items }: { items: ScheduleRequest[] }) {
                 </span>
                 <span className="font-medium text-zinc-900">{requestKindLabel(r)}</span>
                 <span>
-                  · {r.requestedBy === "INSTRUCTOR" ? INSTRUCTOR.name : userName(r.studentId)} 요청
+                  · {r.requestedBy === "INSTRUCTOR" ? (instructorOf()?.name ?? "강사") : userName(r.studentId)} 요청
                 </span>
               </p>
               {r.message && <p className="mt-1">요청 메시지: {r.message}</p>}
@@ -1348,7 +1348,7 @@ function Messenger({ comments, studentId }: { comments: Comment[]; studentId?: s
   return (
     <div className="flex-1 overflow-y-auto bg-zinc-50 p-4">
       <p className="mb-3 text-center text-[11px] text-zinc-500">
-        {INSTRUCTOR.name} · {userName(studentId)} 대화
+        {(instructorOf()?.name ?? "강사")} · {userName(studentId)} 대화
       </p>
       {comments.length === 0 ? (
         <p className="rounded-lg bg-white px-3 py-6 text-center text-xs text-zinc-500">

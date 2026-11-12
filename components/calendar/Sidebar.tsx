@@ -35,9 +35,9 @@ import {
 import { CALENDARS } from "@/lib/calendars";
 import { canCancel, canResolve, makeupSummary } from "@/lib/lesson-machine";
 import { studentColor } from "@/lib/student-colors";
-import { STUDENTS, userName } from "@/lib/mock-data";
+import { userName } from "@/lib/directory";
 import { cn } from "@/lib/utils";
-import { syncKey, useActor, useCalendarStore } from "@/store/calendar-store";
+import { syncKey, useActor, useCalendarStore, useStudents } from "@/store/calendar-store";
 import type { ExternalProvider, ScheduleRequest, SlotDisplay, UserRole } from "@/types/calendar";
 
 const LEGEND: { display: SlotDisplay; label: string; hint: string }[] = [
@@ -94,6 +94,7 @@ export function SidebarContent({
   onFocusNavigate?: () => void;
 }) {
   const [confirmReset, setConfirmReset] = useState(false);
+  const STUDENTS = useStudents();
   const setView = useCalendarStore((s) => s.setView);
   const show = new Set(showList);
   const onClose = onNavigate;

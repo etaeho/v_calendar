@@ -28,7 +28,21 @@ const result = await build({
   target: "es2020",
   jsx: "automatic",
   tsconfig: "tsconfig.json",
-  define: { "process.env.NODE_ENV": '"production"' },
+  // 미리보기는 항상 데모 모드: 서버·외부 연동 키(NEXT_PUBLIC_*)는 비워 둔다
+  define: {
+    "process.env.NODE_ENV": '"production"',
+    ...Object.fromEntries(
+      [
+        "NEXT_PUBLIC_SUPABASE_URL",
+        "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+        "NEXT_PUBLIC_GOOGLE_CLIENT_ID",
+        "NEXT_PUBLIC_KAKAO_JS_KEY",
+        "NEXT_PUBLIC_KAKAO_REDIRECT_URI",
+      ].map((k) => [`process.env.${k}`, '""']),
+    ),
+  },
+  // 위에 없는 process.env 접근이 있어도 미리보기가 멈추지 않게
+  banner: { js: "var process = globalThis.process || { env: {} };" },
   logOverride: { "module-level-directive": "silent" },
 });
 const js = result.outputFiles[0].text.replaceAll("</script", "<\\/script");
